@@ -51,7 +51,7 @@ cargo run --release
 1. 点击 **Select Directory** 选择待监控的根目录；子目录会被递归扫描。
 2. 输入 SiliconFlow 的 **API Key**（需要具备音频转写权限）。
 3. 设定每日执行时间（24 小时制，例如 `02:00`）。
-4. 需要时勾选 **Enable VAD-based segmentation**，即可在上传前启用语音活动检测、自动分段。
+4. 需要时勾选 **Enable VAD-based segmentation**，即可在上传前启用语音活动检测、自动分段；下面的滑块可调节触发阈值与最短片段长度。
 5. 点击 **Start Scheduler** 开始定时任务；日志区将显示扫描状态和 API 返回。
 6. **Save Settings** 可立即将当前配置写入 `config.toml`。
 
@@ -64,6 +64,8 @@ directory = "D:/recordings"
 api_key = "sk-xxxxxxxx"
 schedule_time = "02:00"
 vad_enabled = true
+vad_threshold = 0.6
+vad_min_segment_secs = 2.0
 ```
 
 若需重置，可删除该文件或直接修改内容。
@@ -74,6 +76,7 @@ vad_enabled = true
 - FFmpeg 会先将音频转成 16kHz/Mono PCM，再在本地进行语音片段检测；每个片段单独上传并带上时间戳，最终合并回单个 `.txt` 文件。
 - 如果 VAD 检测失败或没有语音，系统会自动回退到整段音频上传，因此无需担心误判导致任务中断。
 - 当录音存在长时间静音或背景噪声时，建议保持 VAD 开启，可显著缩短 API 处理时长、减少无效 token 消耗。
+- **阈值/最短片段可调**：`VAD Threshold`（0.3~0.9）越高越保守，只有更强烈的语音才会触发；`Min Segment (s)`（0.5~6.0）控制最短合并长度，可避免过多 1 秒内的小段。
 
 ## 🔄 工作流与发布
 

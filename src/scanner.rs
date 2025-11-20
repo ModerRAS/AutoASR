@@ -35,7 +35,8 @@ const VAD_SAMPLE_RATE: u32 = 16_000;
 const VAD_CHUNK_SIZE: usize = 512;
 const VAD_MIN_SPEECH_CHUNKS: usize = 10;
 const VAD_PADDING_CHUNKS: usize = 3;
-const VAD_THRESHOLD: f32 = 0.6;
+const VAD_DEFAULT_THRESHOLD: f32 = 0.6;
+const VAD_DEFAULT_MIN_SEGMENT_SECS: f32 = 2.0;
 
 #[derive(Clone)]
 pub struct ScannerOptions {
@@ -53,8 +54,20 @@ pub struct VadConfig {
 impl Default for VadConfig {
     fn default() -> Self {
         Self {
-            threshold: VAD_THRESHOLD,
-            min_speech_chunks: VAD_MIN_SPEECH_CHUNKS,
+            threshold: VAD_DEFAULT_THRESHOLD,
+            min_speech_chunks: secs_to_chunks(VAD_DEFAULT_MIN_SEGMENT_SECS),
+            padding_chunks: VAD_PADDING_CHUNKS,
+        }
+    }
+}
+
+impl VadConfig {
+    pub fn from_user_settings(threshold: f32, min_segment_secs: f32) -> Self {
+        let threshold = threshold.clamp(0.1, 0.99);
+        let min_secs = min_segment_secs.clamp(0.5, 10.0);
+        Self {
+            threshold,
+            min_speech_chunks: secs_to_chunks(min_secs),
             padding_chunks: VAD_PADDING_CHUNKS,
         }
     }
@@ -506,6 +519,11 @@ impl SpeechSegment {
 
 fn chunk_to_time(chunk: usize) -> f64 {
     (chunk as f64 * VAD_CHUNK_SIZE as f64) / VAD_SAMPLE_RATE as f64
+}
+
+fn secs_to_chunks(secs: f32) -> usize {
+    let raw = ((secs * VAD_SAMPLE_RATE as f32) / VAD_CHUNK_SIZE as f32).ceil() as usize;
+    raw.max(VAD_MIN_SPEECH_CHUNKS)
 }
 
 fn detect_speech_segments(samples: &[i16], cfg: &VadConfig) -> Result<Vec<SpeechSegment>> {

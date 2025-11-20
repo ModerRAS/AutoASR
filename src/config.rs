@@ -17,6 +17,10 @@ pub struct AppConfig {
     pub schedule_time: String,
     /// 是否启用基于 VAD 的语音分段。
     pub vad_enabled: bool,
+    /// VAD 触发阈值（0-1），越大越保守。
+    pub vad_threshold: f32,
+    /// VAD 输出的最短语音长度（秒）。
+    pub vad_min_segment_secs: f32,
 }
 
 impl Default for AppConfig {
@@ -26,6 +30,8 @@ impl Default for AppConfig {
             api_key: String::new(),
             schedule_time: "02:00".to_string(),
             vad_enabled: true,
+            vad_threshold: 0.6,
+            vad_min_segment_secs: 2.0,
         }
     }
 }

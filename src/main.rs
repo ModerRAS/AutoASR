@@ -5,7 +5,7 @@ use crate::scanner::{process_directory, ScanLog, ScanLogLevel, ScannerOptions, V
 use chrono::{Local, NaiveTime, Timelike};
 use iced::{
     executor, time,
-    widget::{button, checkbox, scrollable, text, text_input, Column, Container, Row},
+    widget::{button, checkbox, scrollable, slider, text, text_input, Column, Container, Row},
     Alignment, Application, Color, Command, Element, Font, Length, Settings, Subscription, Theme,
 };
 use std::{
@@ -41,6 +41,8 @@ enum Message {
     ApiKeyChanged(String),
     ScheduleTimeChanged(String),
     VadToggled(bool),
+    VadThresholdChanged(f32),
+    VadMinDurationChanged(f32),
     ToggleRunning,
     Tick(chrono::DateTime<chrono::Local>),
     ScanFinished(Result<Vec<ScanLog>, String>),
@@ -108,6 +110,12 @@ impl Application for AutoAsrApp {
                 };
                 self.log_info(note);
             }
+            Message::VadThresholdChanged(value) => {
+                self.config.vad_threshold = value;
+            }
+            Message::VadMinDurationChanged(value) => {
+                self.config.vad_min_segment_secs = value;
+            }
             Message::ToggleRunning => {
                 if self.is_running {
                     self.is_running = false;
@@ -163,7 +171,10 @@ impl Application for AutoAsrApp {
                             let dir_path = PathBuf::from(dir);
                             let api_key = self.config.api_key.clone();
                             let vad = if self.config.vad_enabled {
-                                Some(VadConfig::default())
+                                Some(VadConfig::from_user_settings(
+                                    self.config.vad_threshold,
+                                    self.config.vad_min_segment_secs,
+                                ))
                             } else {
                                 None
                             };
@@ -243,6 +254,39 @@ impl Application for AutoAsrApp {
             .text_size(16)
             .font(font);
 
+        let vad_threshold_slider = slider(
+            0.3..=0.9,
+            self.config.vad_threshold,
+            Message::VadThresholdChanged,
+        )
+        .step(0.01);
+        let vad_min_duration_slider = slider(
+            0.5..=6.0,
+            self.config.vad_min_segment_secs,
+            Message::VadMinDurationChanged,
+        )
+        .step(0.1);
+
+        let vad_controls = Column::new()
+            .spacing(10)
+            .push(vad_toggle)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(text("VAD Threshold").font(font))
+                    .push(vad_threshold_slider)
+                    .push(text(format!("{:.2}", self.config.vad_threshold)).font(font)),
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(text("Min Segment (s)").font(font))
+                    .push(vad_min_duration_slider)
+                    .push(text(format!("{:.1}s", self.config.vad_min_segment_secs)).font(font)),
+            );
+
         let toggle_btn = button(if self.is_running {
             text("Stop Scheduler").font(font)
         } else {
@@ -282,7 +326,7 @@ impl Application for AutoAsrApp {
                     .push(text("Schedule Time:").font(font))
                     .push(schedule_input),
             )
-            .push(vad_toggle)
+            .push(vad_controls)
             .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
 
         const MAX_LOGS: usize = 500;
