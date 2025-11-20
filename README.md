@@ -7,6 +7,7 @@ AutoASR 是一个基于 Rust + Iced GUI 的定时语音转写桌面工具，内�
 - **跨平台 GUI**：使用 Iced 构建，提供目录选择、API Key 输入、定时器控制与实时日志查看。
 - **计划任务调度**：精确到分钟的 HH:MM 配置，自动记录每日执行状态，避免同日重复运行。
 - **多媒体支持**：内置媒体扫描器，自动跳过已转写的文件；视频会通过 FFmpeg 转为 MP3 后再上传。
+- **多音轨转写**：同一视频的每条音轨都会单独生成 MP3 与转写文本，文件名包含 `-trackX` 以示区分。
 - **健壮的 API 处理**：针对 SiliconFlow API 的成功/失败响应、限流（429）等情况提供详细日志。
 - **持久化配置**：配置保存在 `config.toml`（用户目录下），重启仍然有效。
 - **CI/CD 自动化**：GitHub Actions 覆盖 fmt/clippy/test/build 以及自动打包 Windows 版本并发布 Release。
@@ -33,7 +34,7 @@ AutoASR/
 ### 环境依赖
 
 - Rust 工具链（推荐 `rustup` 安装，最低 1.75+）
-- FFmpeg（确保命令 `ffmpeg` 在 PATH 中）
+- FFmpeg/FFprobe（确保 `ffmpeg`、`ffprobe` 命令可用；通常同捆提供）
 - Windows/Mac/Linux 任意桌面环境
 
 ### 构建与运行
