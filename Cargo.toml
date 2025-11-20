@@ -1,6 +1,6 @@
 [package]
 name = "auto_asr"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
@@ -17,3 +17,5 @@ toml = "0.8"
 futures = "0.3"
 walkdir = "2"
 tokio-util = "0.7"
+voice_activity_detector = "0.2"
+hound = "3"

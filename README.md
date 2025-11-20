@@ -8,6 +8,7 @@ AutoASR 是一个基于 Rust + Iced GUI 的定时语音转写桌面工具，内�
 - **计划任务调度**：精确到分钟的 HH:MM 配置，自动记录每日执行状态，避免同日重复运行。
 - **多媒体支持**：内置媒体扫描器，自动跳过已转写的文件；视频会通过 FFmpeg 转为 MP3 后再上传。
 - **多音轨转写**：同一视频的每条音轨都会单独生成 MP3 与转写文本，文件名包含 `-trackX` 以示区分。
+- **语音活动检测（VAD）**：可选的 `voice_activity_detector` 分段流程，先将音频拆成多段语音后再上传，显著降低静音/噪声带来的时长浪费，并在结果中附上分段时间戳。
 - **健壮的 API 处理**：针对 SiliconFlow API 的成功/失败响应、限流（429）等情况提供详细日志。
 - **持久化配置**：配置保存在 `config.toml`（用户目录下），重启仍然有效。
 - **CI/CD 自动化**：GitHub Actions 覆盖 fmt/clippy/test/build 以及自动打包 Windows 版本并发布 Release。
@@ -50,8 +51,9 @@ cargo run --release
 1. 点击 **Select Directory** 选择待监控的根目录；子目录会被递归扫描。
 2. 输入 SiliconFlow 的 **API Key**（需要具备音频转写权限）。
 3. 设定每日执行时间（24 小时制，例如 `02:00`）。
-4. 点击 **Start Scheduler** 开始定时任务；日志区将显示扫描状态和 API 返回。
-5. **Save Settings** 可立即将当前配置写入 `config.toml`。
+4. 需要时勾选 **Enable VAD-based segmentation**，即可在上传前启用语音活动检测、自动分段。
+5. 点击 **Start Scheduler** 开始定时任务；日志区将显示扫描状态和 API 返回。
+6. **Save Settings** 可立即将当前配置写入 `config.toml`。
 
 ### 配置文件说明
 
@@ -61,9 +63,17 @@ cargo run --release
 directory = "D:/recordings"
 api_key = "sk-xxxxxxxx"
 schedule_time = "02:00"
+vad_enabled = true
 ```
 
 若需重置，可删除该文件或直接修改内容。
+
+### 语音活动检测（VAD）
+
+- 本项目集成了 [voice_activity_detector](https://crates.io/crates/voice_activity_detector) crate（Silero V5 模型），默认勾选开启。
+- FFmpeg 会先将音频转成 16kHz/Mono PCM，再在本地进行语音片段检测；每个片段单独上传并带上时间戳，最终合并回单个 `.txt` 文件。
+- 如果 VAD 检测失败或没有语音，系统会自动回退到整段音频上传，因此无需担心误判导致任务中断。
+- 当录音存在长时间静音或背景噪声时，建议保持 VAD 开启，可显著缩短 API 处理时长、减少无效 token 消耗。
 
 ## 🔄 工作流与发布
 

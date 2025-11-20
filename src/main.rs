@@ -1,11 +1,11 @@
 //! Iced GUI 入口，负责状态管理、调度以及用户交互。
 
 use crate::config::AppConfig;
-use crate::scanner::{process_directory, ScanLog, ScanLogLevel};
+use crate::scanner::{process_directory, ScanLog, ScanLogLevel, ScannerOptions, VadConfig};
 use chrono::{Local, NaiveTime, Timelike};
 use iced::{
     executor, time,
-    widget::{button, scrollable, text, text_input, Column, Container, Row},
+    widget::{button, checkbox, scrollable, text, text_input, Column, Container, Row},
     Alignment, Application, Color, Command, Element, Font, Length, Settings, Subscription, Theme,
 };
 use std::{
@@ -40,6 +40,7 @@ enum Message {
     SelectDirectory,
     ApiKeyChanged(String),
     ScheduleTimeChanged(String),
+    VadToggled(bool),
     ToggleRunning,
     Tick(chrono::DateTime<chrono::Local>),
     ScanFinished(Result<Vec<ScanLog>, String>),
@@ -98,6 +99,15 @@ impl Application for AutoAsrApp {
             Message::ScheduleTimeChanged(time) => {
                 self.config.schedule_time = time;
             }
+            Message::VadToggled(enabled) => {
+                self.config.vad_enabled = enabled;
+                let note = if enabled {
+                    "Voice Activity Detection enabled."
+                } else {
+                    "Voice Activity Detection disabled."
+                };
+                self.log_info(note);
+            }
             Message::ToggleRunning => {
                 if self.is_running {
                     self.is_running = false;
@@ -152,13 +162,19 @@ impl Application for AutoAsrApp {
 
                             let dir_path = PathBuf::from(dir);
                             let api_key = self.config.api_key.clone();
+                            let vad = if self.config.vad_enabled {
+                                Some(VadConfig::default())
+                            } else {
+                                None
+                            };
 
                             let (progress_tx, progress_rx) = mpsc::unbounded_channel();
                             let progress_handle = Arc::new(Mutex::new(progress_rx));
                             self.scan_progress_rx = Some(progress_handle.clone());
 
+                            let options = ScannerOptions { api_key, vad };
                             let scan_cmd = Command::perform(
-                                process_directory(dir_path, api_key, Some(progress_tx)),
+                                process_directory(dir_path, options, Some(progress_tx)),
                                 |res| Message::ScanFinished(res.map_err(|e| e.to_string())),
                             );
                             let progress_cmd = AutoAsrApp::listen_scan_progress(progress_handle);
@@ -221,6 +237,12 @@ impl Application for AutoAsrApp {
             .padding(10)
             .font(font);
 
+        let vad_toggle = checkbox("Enable VAD-based segmentation", self.config.vad_enabled)
+            .on_toggle(Message::VadToggled)
+            .spacing(10)
+            .text_size(16)
+            .font(font);
+
         let toggle_btn = button(if self.is_running {
             text("Stop Scheduler").font(font)
         } else {
@@ -260,6 +282,7 @@ impl Application for AutoAsrApp {
                     .push(text("Schedule Time:").font(font))
                     .push(schedule_input),
             )
+            .push(vad_toggle)
             .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
 
         const MAX_LOGS: usize = 500;

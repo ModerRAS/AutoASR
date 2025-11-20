@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub api_key: String,
     /// 每日执行时间，24 小时制 `HH:MM`。
     pub schedule_time: String,
+    /// 是否启用基于 VAD 的语音分段。
+    pub vad_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -23,6 +25,7 @@ impl Default for AppConfig {
             directory: None,
             api_key: String::new(),
             schedule_time: "02:00".to_string(),
+            vad_enabled: true,
         }
     }
 }
