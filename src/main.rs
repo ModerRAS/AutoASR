@@ -107,7 +107,7 @@ impl Application for AutoAsrApp {
                 let config = self.config.clone();
                 return Command::perform(
                     async move { config.save().map_err(|e| e.to_string()) },
-                    |res| Message::ConfigSaved(res),
+                    Message::ConfigSaved,
                 );
             }
             Message::ConfigSaved(res) => match res {
@@ -133,25 +133,23 @@ impl Application for AutoAsrApp {
 
                     if now_time.hour() == target_time.hour()
                         && now_time.minute() == target_time.minute()
+                        && self.last_run_date.as_deref() != Some(&current_date)
                     {
-                        if self.last_run_date.as_deref() != Some(&current_date) {
-                            if let Some(dir) = &self.config.directory {
-                                self.is_processing = true;
-                                self.last_run_date = Some(current_date);
-                                self.logs.push("Starting scheduled scan...".to_string());
+                        if let Some(dir) = &self.config.directory {
+                            self.is_processing = true;
+                            self.last_run_date = Some(current_date);
+                            self.logs.push("Starting scheduled scan...".to_string());
 
-                                let dir_path = PathBuf::from(dir);
-                                let api_key = self.config.api_key.clone();
+                            let dir_path = PathBuf::from(dir);
+                            let api_key = self.config.api_key.clone();
 
-                                return Command::perform(
-                                    process_directory(dir_path, api_key),
-                                    |res| Message::ScanFinished(res.map_err(|e| e.to_string())),
-                                );
-                            } else {
-                                self.logs.push(
-                                    "Scheduled time reached but no directory selected.".to_string(),
-                                );
-                            }
+                            return Command::perform(process_directory(dir_path, api_key), |res| {
+                                Message::ScanFinished(res.map_err(|e| e.to_string()))
+                            });
+                        } else {
+                            self.logs.push(
+                                "Scheduled time reached but no directory selected.".to_string(),
+                            );
                         }
                     }
                 }
