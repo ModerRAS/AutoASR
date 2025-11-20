@@ -6,7 +6,7 @@ use chrono::{Local, NaiveTime, Timelike};
 use iced::{
     executor, time,
     widget::{button, scrollable, text, text_input, Column, Container, Row},
-    Alignment, Application, Color, Command, Element, Length, Settings, Subscription, Theme,
+    Alignment, Application, Color, Command, Element, Font, Length, Settings, Subscription, Theme,
 };
 use std::{
     path::{Path, PathBuf},
@@ -197,28 +197,34 @@ impl Application for AutoAsrApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let title = text("AutoASR - SiliconFlow").size(30);
+        let font = Self::preferred_font();
+
+        let title = text("AutoASR - SiliconFlow").font(font).size(30);
 
         let dir_display = text(
             self.config
                 .directory
                 .as_deref()
                 .unwrap_or("No directory selected"),
-        );
-        let dir_btn = button("Select Directory").on_press(Message::SelectDirectory);
+        )
+        .font(font);
+        let dir_btn =
+            button(text("Select Directory").font(font)).on_press(Message::SelectDirectory);
 
         let api_key_input = text_input("Enter API Key", &self.config.api_key)
             .on_input(Message::ApiKeyChanged)
-            .padding(10);
+            .padding(10)
+            .font(font);
 
         let schedule_input = text_input("Schedule Time (HH:MM)", &self.config.schedule_time)
             .on_input(Message::ScheduleTimeChanged)
-            .padding(10);
+            .padding(10)
+            .font(font);
 
         let toggle_btn = button(if self.is_running {
-            "Stop Scheduler"
+            text("Stop Scheduler").font(font)
         } else {
-            "Start Scheduler"
+            text("Start Scheduler").font(font)
         })
         .on_press(Message::ToggleRunning)
         .padding(10)
@@ -228,7 +234,7 @@ impl Application for AutoAsrApp {
             iced::theme::Button::Primary
         });
 
-        let save_btn = button("Save Settings")
+        let save_btn = button(text("Save Settings").font(font))
             .on_press(Message::SaveConfig)
             .padding(10);
 
@@ -245,13 +251,13 @@ impl Application for AutoAsrApp {
             .push(
                 Column::new()
                     .spacing(5)
-                    .push(text("API Key:"))
+                    .push(text("API Key:").font(font))
                     .push(api_key_input),
             )
             .push(
                 Column::new()
                     .spacing(5)
-                    .push(text("Schedule Time:"))
+                    .push(text("Schedule Time:").font(font))
                     .push(schedule_input),
             )
             .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
@@ -265,7 +271,11 @@ impl Application for AutoAsrApp {
                 .fold(Column::new().spacing(5), |col, log| {
                     let (label, color) = Self::log_visuals(log.level);
                     let display = format!("[{}] {}", label, log.message);
-                    col.push(text(display).style(iced::theme::Text::Color(color)))
+                    col.push(
+                        text(display)
+                            .font(Self::preferred_font())
+                            .style(iced::theme::Text::Color(color)),
+                    )
                 });
 
         let logs_scroll = scrollable(logs_content)
@@ -276,7 +286,7 @@ impl Application for AutoAsrApp {
             .spacing(20)
             .padding(20)
             .push(controls)
-            .push(text("Logs:").size(20))
+            .push(text("Logs:").font(font).size(20))
             .push(
                 Container::new(logs_scroll)
                     .style(iced::theme::Container::Box)
@@ -296,6 +306,23 @@ impl Application for AutoAsrApp {
 }
 
 impl AutoAsrApp {
+    fn preferred_font() -> Font {
+        #[cfg(target_os = "windows")]
+        {
+            return Font::with_name("Microsoft YaHei");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            return Font::with_name("PingFang SC");
+        }
+
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        {
+            return Font::with_name("Noto Sans CJK SC");
+        }
+    }
+
     fn listen_scan_progress(
         receiver: Arc<Mutex<mpsc::UnboundedReceiver<ScanLog>>>,
     ) -> Command<Message> {
