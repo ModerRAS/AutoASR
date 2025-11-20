@@ -8,7 +8,11 @@ use iced::{
     widget::{button, scrollable, text, text_input, Column, Container, Row},
     Alignment, Application, Color, Command, Element, Length, Settings, Subscription, Theme,
 };
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::sync::{mpsc, Mutex};
 
 mod api;
 mod config;
@@ -26,6 +30,7 @@ struct AutoAsrApp {
     logs: Vec<ScanLog>,
     last_run_date: Option<String>,
     is_processing: bool,
+    scan_progress_rx: Option<Arc<Mutex<mpsc::UnboundedReceiver<ScanLog>>>>,
 }
 
 /// Iced 消息枚举，覆盖用户交互与后台任务回调。
@@ -38,6 +43,7 @@ enum Message {
     ToggleRunning,
     Tick(chrono::DateTime<chrono::Local>),
     ScanFinished(Result<Vec<ScanLog>, String>),
+    ScanProgress(Option<ScanLog>),
     SaveConfig,
     ConfigSaved(Result<(), String>),
 }
@@ -57,6 +63,7 @@ impl Application for AutoAsrApp {
                 logs: vec![ScanLog::new(ScanLogLevel::Info, "Application started.")],
                 last_run_date: None,
                 is_processing: false,
+                scan_progress_rx: None,
             },
             Command::none(),
         )
@@ -146,9 +153,17 @@ impl Application for AutoAsrApp {
                             let dir_path = PathBuf::from(dir);
                             let api_key = self.config.api_key.clone();
 
-                            return Command::perform(process_directory(dir_path, api_key), |res| {
-                                Message::ScanFinished(res.map_err(|e| e.to_string()))
-                            });
+                            let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+                            let progress_handle = Arc::new(Mutex::new(progress_rx));
+                            self.scan_progress_rx = Some(progress_handle.clone());
+
+                            let scan_cmd = Command::perform(
+                                process_directory(dir_path, api_key, Some(progress_tx)),
+                                |res| Message::ScanFinished(res.map_err(|e| e.to_string())),
+                            );
+                            let progress_cmd = AutoAsrApp::listen_scan_progress(progress_handle);
+
+                            return Command::batch(vec![scan_cmd, progress_cmd]);
                         } else {
                             self.log_error("Scheduled time reached but no directory selected.");
                         }
@@ -157,6 +172,7 @@ impl Application for AutoAsrApp {
             }
             Message::ScanFinished(res) => {
                 self.is_processing = false;
+                self.scan_progress_rx = None;
                 match res {
                     Ok(new_logs) => {
                         self.logs.extend(new_logs);
@@ -166,6 +182,15 @@ impl Application for AutoAsrApp {
                         self.log_error(format!("Scan error: {}", e));
                     }
                 }
+            }
+            Message::ScanProgress(Some(log)) => {
+                self.logs.push(log);
+                if let Some(rx) = &self.scan_progress_rx {
+                    return AutoAsrApp::listen_scan_progress(rx.clone());
+                }
+            }
+            Message::ScanProgress(None) => {
+                self.scan_progress_rx = None;
             }
         }
         Command::none()
@@ -231,11 +256,17 @@ impl Application for AutoAsrApp {
             )
             .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
 
-        let logs_content = self.logs.iter().fold(Column::new().spacing(5), |col, log| {
-            let (label, color) = Self::log_visuals(log.level);
-            let display = format!("[{}] {}", label, log.message);
-            col.push(text(display).style(iced::theme::Text::Color(color)))
-        });
+        const MAX_LOGS: usize = 500;
+        let logs_content =
+            self.logs
+                .iter()
+                .rev()
+                .take(MAX_LOGS)
+                .fold(Column::new().spacing(5), |col, log| {
+                    let (label, color) = Self::log_visuals(log.level);
+                    let display = format!("[{}] {}", label, log.message);
+                    col.push(text(display).style(iced::theme::Text::Color(color)))
+                });
 
         let logs_scroll = scrollable(logs_content)
             .height(Length::Fill)
@@ -265,6 +296,18 @@ impl Application for AutoAsrApp {
 }
 
 impl AutoAsrApp {
+    fn listen_scan_progress(
+        receiver: Arc<Mutex<mpsc::UnboundedReceiver<ScanLog>>>,
+    ) -> Command<Message> {
+        Command::perform(
+            async move {
+                let mut rx = receiver.lock().await;
+                rx.recv().await
+            },
+            Message::ScanProgress,
+        )
+    }
+
     fn push_log(&mut self, level: ScanLogLevel, message: impl Into<String>) {
         self.logs.push(ScanLog::new(level, message));
     }
