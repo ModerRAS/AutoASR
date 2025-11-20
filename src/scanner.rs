@@ -375,10 +375,8 @@ async fn process_with_vad(
     vad_cfg: &VadConfig,
     logger: &mut ScanLogger,
 ) -> Result<()> {
-    logger.info(format!(
-        "{} 启用 VAD，准备语音分段。",
-        format!("{:?}{}", original_path, track_suffix(track_index, None))
-    ));
+    let display_name = format!("{:?}{}", original_path, track_suffix(track_index, None));
+    logger.info(format!("{} 启用 VAD，准备语音分段。", display_name));
 
     let pcm_path = convert_to_pcm16(audio_path).await?;
     let samples = read_wav_samples(&pcm_path).await?;
@@ -410,7 +408,7 @@ async fn process_with_vad(
                     format_timestamp(segment.end_sec)
                 );
                 let _ = writeln!(&mut combined, "{}", text.trim());
-                combined.push_str("\n");
+                combined.push('\n');
             }
             Err(e) => {
                 logger.error(format!("分段 {} 调用 API 失败：{}", idx + 1, e));
@@ -427,8 +425,7 @@ async fn process_with_vad(
     fs::write(&txt_path, combined).await?;
     logger.success(format!(
         "{} VAD 分段完成，结果输出 {:?}",
-        format!("{:?}{}", original_path, track_suffix(track_index, None)),
-        txt_path
+        display_name, txt_path
     ));
     Ok(())
 }

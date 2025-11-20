@@ -332,17 +332,17 @@ impl AutoAsrApp {
     fn preferred_font() -> Font {
         #[cfg(target_os = "windows")]
         {
-            return Font::with_name("Microsoft YaHei");
+            Font::with_name("Microsoft YaHei")
         }
 
         #[cfg(target_os = "macos")]
         {
-            return Font::with_name("PingFang SC");
+            Font::with_name("PingFang SC")
         }
 
         #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
         {
-            return Font::with_name("Noto Sans CJK SC");
+            Font::with_name("Noto Sans CJK SC")
         }
     }
 
