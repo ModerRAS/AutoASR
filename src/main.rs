@@ -1,12 +1,12 @@
 //! Iced GUI 入口，负责状态管理、调度以及用户交互。
 
 use crate::config::AppConfig;
-use crate::scanner::process_directory;
+use crate::scanner::{process_directory, ScanLog, ScanLogLevel};
 use chrono::{Local, NaiveTime, Timelike};
 use iced::{
     executor, time,
     widget::{button, scrollable, text, text_input, Column, Container, Row},
-    Alignment, Application, Command, Element, Length, Settings, Subscription, Theme,
+    Alignment, Application, Color, Command, Element, Length, Settings, Subscription, Theme,
 };
 use std::path::{Path, PathBuf};
 
@@ -23,7 +23,7 @@ pub fn main() -> iced::Result {
 struct AutoAsrApp {
     config: AppConfig,
     is_running: bool,
-    logs: Vec<String>,
+    logs: Vec<ScanLog>,
     last_run_date: Option<String>,
     is_processing: bool,
 }
@@ -37,7 +37,7 @@ enum Message {
     ScheduleTimeChanged(String),
     ToggleRunning,
     Tick(chrono::DateTime<chrono::Local>),
-    ScanFinished(Result<Vec<String>, String>),
+    ScanFinished(Result<Vec<ScanLog>, String>),
     SaveConfig,
     ConfigSaved(Result<(), String>),
 }
@@ -54,7 +54,7 @@ impl Application for AutoAsrApp {
             Self {
                 config,
                 is_running: false,
-                logs: vec!["Application started.".to_string()],
+                logs: vec![ScanLog::new(ScanLogLevel::Info, "Application started.")],
                 last_run_date: None,
                 is_processing: false,
             },
@@ -82,7 +82,7 @@ impl Application for AutoAsrApp {
             Message::DirectorySelected(path) => {
                 if let Some(p) = path {
                     self.config.directory = Some(p.to_string_lossy().to_string());
-                    self.logs.push(format!("Directory selected: {:?}", p));
+                    self.log_info(format!("Directory selected: {:?}", p));
                 }
             }
             Message::ApiKeyChanged(key) => {
@@ -94,16 +94,16 @@ impl Application for AutoAsrApp {
             Message::ToggleRunning => {
                 if self.is_running {
                     self.is_running = false;
-                    self.logs.push("Scheduler stopped.".to_string());
+                    self.log_info("Scheduler stopped.");
                 } else {
                     match self.validate_ready_state() {
                         Ok(_) => {
                             self.is_running = true;
                             self.last_run_date = None;
-                            self.logs.push("Scheduler started.".to_string());
+                            self.log_success("Scheduler started.");
                         }
                         Err(err) => {
-                            self.logs.push(format!("Cannot start scheduler: {}", err));
+                            self.log_error(format!("Cannot start scheduler: {}", err));
                         }
                     }
                 }
@@ -116,8 +116,8 @@ impl Application for AutoAsrApp {
                 );
             }
             Message::ConfigSaved(res) => match res {
-                Ok(_) => self.logs.push("Configuration saved.".to_string()),
-                Err(e) => self.logs.push(format!("Failed to save config: {}", e)),
+                Ok(_) => self.log_success("Configuration saved."),
+                Err(e) => self.log_error(format!("Failed to save config: {}", e)),
             },
             Message::Tick(now) => {
                 if self.is_running && !self.is_processing {
@@ -125,9 +125,7 @@ impl Application for AutoAsrApp {
                         match NaiveTime::parse_from_str(&self.config.schedule_time, "%H:%M") {
                             Ok(t) => t,
                             Err(_) => {
-                                self.logs.push(
-                                    "Invalid schedule time format. Scheduler stopped.".to_string(),
-                                );
+                                self.log_error("Invalid schedule time format. Scheduler stopped.");
                                 self.is_running = false;
                                 return Command::none();
                             }
@@ -140,10 +138,10 @@ impl Application for AutoAsrApp {
                         && now_time.minute() == target_time.minute()
                         && self.last_run_date.as_deref() != Some(&current_date)
                     {
-                        if let Some(dir) = &self.config.directory {
+                        if let Some(dir) = self.config.directory.clone() {
                             self.is_processing = true;
                             self.last_run_date = Some(current_date);
-                            self.logs.push("Starting scheduled scan...".to_string());
+                            self.log_info("Starting scheduled scan...");
 
                             let dir_path = PathBuf::from(dir);
                             let api_key = self.config.api_key.clone();
@@ -152,9 +150,7 @@ impl Application for AutoAsrApp {
                                 Message::ScanFinished(res.map_err(|e| e.to_string()))
                             });
                         } else {
-                            self.logs.push(
-                                "Scheduled time reached but no directory selected.".to_string(),
-                            );
+                            self.log_error("Scheduled time reached but no directory selected.");
                         }
                     }
                 }
@@ -163,13 +159,11 @@ impl Application for AutoAsrApp {
                 self.is_processing = false;
                 match res {
                     Ok(new_logs) => {
-                        for log in new_logs {
-                            self.logs.push(log);
-                        }
-                        self.logs.push("Scan completed.".to_string());
+                        self.logs.extend(new_logs);
+                        self.log_success("Scan completed.");
                     }
                     Err(e) => {
-                        self.logs.push(format!("Scan error: {}", e));
+                        self.log_error(format!("Scan error: {}", e));
                     }
                 }
             }
@@ -237,10 +231,11 @@ impl Application for AutoAsrApp {
             )
             .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
 
-        let logs_content = self
-            .logs
-            .iter()
-            .fold(Column::new().spacing(5), |col, log| col.push(text(log)));
+        let logs_content = self.logs.iter().fold(Column::new().spacing(5), |col, log| {
+            let (label, color) = Self::log_visuals(log.level);
+            let display = format!("[{}] {}", label, log.message);
+            col.push(text(display).style(iced::theme::Text::Color(color)))
+        });
 
         let logs_scroll = scrollable(logs_content)
             .height(Length::Fill)
@@ -270,6 +265,30 @@ impl Application for AutoAsrApp {
 }
 
 impl AutoAsrApp {
+    fn push_log(&mut self, level: ScanLogLevel, message: impl Into<String>) {
+        self.logs.push(ScanLog::new(level, message));
+    }
+
+    fn log_info(&mut self, message: impl Into<String>) {
+        self.push_log(ScanLogLevel::Info, message);
+    }
+
+    fn log_success(&mut self, message: impl Into<String>) {
+        self.push_log(ScanLogLevel::Success, message);
+    }
+
+    fn log_error(&mut self, message: impl Into<String>) {
+        self.push_log(ScanLogLevel::Error, message);
+    }
+
+    fn log_visuals(level: ScanLogLevel) -> (&'static str, Color) {
+        match level {
+            ScanLogLevel::Info => ("INFO", Color::from_rgb(0.75, 0.75, 0.78)),
+            ScanLogLevel::Success => ("OK", Color::from_rgb(0.3, 0.75, 0.4)),
+            ScanLogLevel::Error => ("ERR", Color::from_rgb(0.92, 0.32, 0.32)),
+        }
+    }
+
     /// 校验调度启动前的必要条件，避免无效配置触发任务。
     fn validate_ready_state(&self) -> Result<(), String> {
         let dir = self

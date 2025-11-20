@@ -6,13 +6,47 @@ use std::path::{Path, PathBuf};
 use tokio::{fs, process::Command};
 use walkdir::WalkDir;
 
+#[derive(Debug, Clone, Copy)]
+pub enum ScanLogLevel {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanLog {
+    pub level: ScanLogLevel,
+    pub message: String,
+}
+
+impl ScanLog {
+    pub fn new(level: ScanLogLevel, message: impl Into<String>) -> Self {
+        Self {
+            level,
+            message: message.into(),
+        }
+    }
+}
+
+fn log_info(logs: &mut Vec<ScanLog>, message: impl Into<String>) {
+    logs.push(ScanLog::new(ScanLogLevel::Info, message));
+}
+
+fn log_success(logs: &mut Vec<ScanLog>, message: impl Into<String>) {
+    logs.push(ScanLog::new(ScanLogLevel::Success, message));
+}
+
+fn log_error(logs: &mut Vec<ScanLog>, message: impl Into<String>) {
+    logs.push(ScanLog::new(ScanLogLevel::Error, message));
+}
+
 enum PendingJob {
     Audio(PathBuf),
     Video { path: PathBuf, tracks: Vec<u32> },
 }
 
 /// 扫描指定目录并对尚未转写的媒体文件执行 ASR，返回日志列表。
-pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<String>> {
+pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<ScanLog>> {
     let mut logs = Vec::new();
     let mut jobs = Vec::new();
 
@@ -26,7 +60,6 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
         return Err(anyhow!("Directory does not exist: {:?}", dir));
     }
 
-    // 1. Scan directory并决定待处理任务
     for entry in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_file() {
@@ -46,7 +79,7 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
             match audio_stream_indices(path).await {
                 Ok(indices) => {
                     if indices.is_empty() {
-                        logs.push(format!("Skip {:?}: video contains no audio stream.", path));
+                        log_info(&mut logs, format!("跳过 {:?}：视频中未检测到音轨。", path));
                         continue;
                     }
 
@@ -59,10 +92,7 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
                     }
 
                     if pending_tracks.is_empty() {
-                        logs.push(format!(
-                            "Skip {:?}: all audio tracks already transcribed.",
-                            path
-                        ));
+                        log_info(&mut logs, format!("跳过 {:?}：所有音轨均已转写。", path));
                         continue;
                     }
 
@@ -72,10 +102,7 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
                     });
                 }
                 Err(e) => {
-                    logs.push(format!(
-                        "Failed to inspect audio tracks for {:?}: {}",
-                        path, e
-                    ));
+                    log_error(&mut logs, format!("读取 {:?} 音轨失败：{}", path, e));
                 }
             }
         } else {
@@ -88,7 +115,8 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
     }
 
     if jobs.is_empty() {
-        return Ok(vec!["No new files to process.".to_string()]);
+        log_info(&mut logs, "没有检测到新的待转写文件。");
+        return Ok(logs);
     }
 
     let total_targets: usize = jobs
@@ -99,23 +127,17 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
         })
         .sum();
 
-    logs.push(format!("Found {} audio targets to process.", total_targets));
+    log_info(&mut logs, format!("待处理音轨总数：{}。", total_targets));
 
     for job in jobs {
         match job {
             PendingJob::Audio(path) => {
-                logs.push(format!("Processing audio file {:?}", path));
                 process_audio_source(&api_key, &path, &path, None, &mut logs).await;
             }
             PendingJob::Video { path, tracks } => {
                 for track in tracks {
-                    logs.push(format!("Processing {:?} track {}", path, track));
                     match ensure_audio_track(&path, track).await {
                         Ok(audio_path) => {
-                            logs.push(format!(
-                                "Audio track {} prepared at {:?}",
-                                track, audio_path
-                            ));
                             process_audio_source(
                                 &api_key,
                                 &path,
@@ -125,10 +147,10 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
                             )
                             .await;
                         }
-                        Err(e) => logs.push(format!(
-                            "Failed to prepare audio for {:?} track {}: {}",
-                            path, track, e
-                        )),
+                        Err(e) => log_error(
+                            &mut logs,
+                            format!("无法提取 {:?} 的音轨 {}：{}", path, track, e),
+                        ),
                     }
                 }
             }
@@ -137,8 +159,6 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
 
     Ok(logs)
 }
-
-/// 判断扩展名是否为受支持的音视频格式。
 fn is_media_extension(ext: &str) -> bool {
     matches!(
         ext,
@@ -215,28 +235,26 @@ async fn process_audio_source(
     original_path: &Path,
     audio_path: &Path,
     track_index: Option<u32>,
-    logs: &mut Vec<String>,
+    logs: &mut Vec<ScanLog>,
 ) {
+    let target_name = format!("{:?}{}", original_path, track_suffix(track_index));
+    log_info(
+        logs,
+        format!("开始转写 {}，音频源 {:?}", target_name, audio_path),
+    );
+
     match transcribe_file(api_key, audio_path).await {
         Ok(text) => {
             let txt_path = transcript_result_path(original_path, track_index);
-            if let Err(e) = fs::write(&txt_path, text).await {
-                logs.push(format!(
-                    "Failed to save result for {:?}{}: {}",
-                    original_path,
-                    track_suffix(track_index),
-                    e
-                ));
-            } else {
-                logs.push(format!("Success: Saved to {:?}", txt_path));
+            match fs::write(&txt_path, text).await {
+                Ok(_) => log_success(
+                    logs,
+                    format!("完成 {}，结果输出 {:?}", target_name, txt_path),
+                ),
+                Err(e) => log_error(logs, format!("写入 {} 失败：{}", target_name, e)),
             }
         }
-        Err(e) => logs.push(format!(
-            "API Error for {:?}{}: {}",
-            original_path,
-            track_suffix(track_index),
-            e
-        )),
+        Err(e) => log_error(logs, format!("调用 API 转写 {} 失败：{}", target_name, e)),
     }
 }
 
