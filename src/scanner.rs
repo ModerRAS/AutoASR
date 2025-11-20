@@ -1,9 +1,12 @@
+//! 目录扫描与媒体处理逻辑，包含递归遍历、FFmpeg 转码与结果落盘。
+
 use crate::api::transcribe_file;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 use tokio::{fs, process::Command};
 use walkdir::WalkDir;
 
+/// 扫描指定目录并对尚未转写的媒体文件执行 ASR，返回日志列表。
 pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<String>> {
     let mut logs = Vec::new();
     let mut files_to_process = Vec::new();
@@ -96,6 +99,7 @@ pub async fn process_directory(dir: PathBuf, api_key: String) -> Result<Vec<Stri
     Ok(logs)
 }
 
+/// 判断扩展名是否为受支持的音视频格式。
 fn is_media_extension(ext: &str) -> bool {
     matches!(
         ext,
@@ -103,6 +107,7 @@ fn is_media_extension(ext: &str) -> bool {
     )
 }
 
+/// 判断给定路径是否属于需要先转码的视频文件。
 fn is_video(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
         let ext = ext.to_string_lossy().to_lowercase();
@@ -112,6 +117,7 @@ fn is_video(path: &Path) -> bool {
     }
 }
 
+/// 通过 FFmpeg 将视频转为 MP3 音频，供 ASR 上传使用。
 async fn convert_to_mp3(input: &Path, output: &Path) -> Result<()> {
     let status = Command::new("ffmpeg")
         .arg("-i")
@@ -131,6 +137,7 @@ async fn convert_to_mp3(input: &Path, output: &Path) -> Result<()> {
     }
 }
 
+/// 基于原始文件名生成转写结果 `.txt` 路径。
 fn transcript_result_path(original: &Path) -> PathBuf {
     let file_name = original
         .file_name()

@@ -1,3 +1,5 @@
+//! 调用 SiliconFlow 语音转写 API 的封装。
+
 use anyhow::{anyhow, Result};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
@@ -6,11 +8,14 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
+/// SiliconFlow 返回的成功响应结构。
 #[derive(Deserialize, Debug)]
 pub struct SuccessResponse {
+    /// 服务端返回的完整转写文本。
     pub text: String,
 }
 
+/// 上传单个音频文件并返回识别文本，自动推断常见 MIME 类型。
 pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> {
     let client = Client::new();
     let url = "https://api.siliconflow.cn/v1/audio/transcriptions";
@@ -65,6 +70,7 @@ pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> 
     Err(anyhow!(format_api_error(status, &text)))
 }
 
+/// 将 API 错误响应格式化为易读的日志文本。
 fn format_api_error(status: StatusCode, body: &str) -> String {
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         if let Some(obj) = value.as_object() {

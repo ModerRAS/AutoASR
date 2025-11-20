@@ -1,3 +1,5 @@
+//! Iced GUI 入口，负责状态管理、调度以及用户交互。
+
 use crate::config::AppConfig;
 use crate::scanner::process_directory;
 use chrono::{Local, NaiveTime, Timelike};
@@ -12,10 +14,12 @@ mod api;
 mod config;
 mod scanner;
 
+/// 程序入口，启动 Iced 应用。
 pub fn main() -> iced::Result {
     AutoAsrApp::run(Settings::default())
 }
 
+/// GUI 主体，封装配置、调度状态与日志输出。
 struct AutoAsrApp {
     config: AppConfig,
     is_running: bool,
@@ -24,6 +28,7 @@ struct AutoAsrApp {
     is_processing: bool,
 }
 
+/// Iced 消息枚举，覆盖用户交互与后台任务回调。
 #[derive(Debug, Clone)]
 enum Message {
     DirectorySelected(Option<PathBuf>),
@@ -265,6 +270,7 @@ impl Application for AutoAsrApp {
 }
 
 impl AutoAsrApp {
+    /// 校验调度启动前的必要条件，避免无效配置触发任务。
     fn validate_ready_state(&self) -> Result<(), String> {
         let dir = self
             .config
