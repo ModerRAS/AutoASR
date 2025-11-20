@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  lint-test-build:
+    name: Lint, test, and build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --all --all-features
+
+      - name: Cargo build (release)
+        run: cargo build --release --all-features
+
+      - name: Upload Windows artifact
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto_asr-windows-release
+          path: target/release/auto_asr.exe
+          if-no-files-found: error

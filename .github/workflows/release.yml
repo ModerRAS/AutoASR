@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --all --all-features
+
+      - name: Build release binary
+        run: cargo build --release --all-features
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = "dist"
+          if (Test-Path $dist) {
+            Remove-Item $dist -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item target/release/auto_asr.exe $dist/
+          Copy-Item README.md $dist/
+          Copy-Item LICENSE $dist/
+          $zipPath = "auto_asr-windows.zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path "$dist/*" -DestinationPath $zipPath
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto_asr-windows-release
+          path: auto_asr-windows.zip
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: auto_asr-windows.zip
+          generate_release_notes: true

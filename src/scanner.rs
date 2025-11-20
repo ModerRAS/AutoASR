@@ -138,3 +138,37 @@ fn transcript_result_path(original: &Path) -> PathBuf {
         .unwrap_or_else(|| "result".to_string());
     original.with_file_name(format!("{}.txt", file_name))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_extension_detection() {
+        for ext in ["mp3", "wav", "ogg", "mp4", "mkv"] {
+            assert!(is_media_extension(ext));
+        }
+
+        for ext in ["txt", "rs", "json", "zip"] {
+            assert!(!is_media_extension(ext));
+        }
+    }
+
+    #[test]
+    fn video_detection() {
+        assert!(is_video(Path::new("C:/data/sample.MP4")));
+        assert!(!is_video(Path::new("C:/data/audio.mp3")));
+        assert!(!is_video(Path::new("C:/data/no_ext")));
+    }
+
+    #[test]
+    fn transcript_path_preserves_original_name() {
+        let path = Path::new("C:/tmp/input/video.mp4");
+        let txt = transcript_result_path(path);
+        assert_eq!(txt, PathBuf::from("C:/tmp/input/video.mp4.txt"));
+
+        let no_ext = Path::new("/tmp/audio");
+        let txt2 = transcript_result_path(no_ext);
+        assert_eq!(txt2, PathBuf::from("/tmp/audio.txt"));
+    }
+}

@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
 use crate::scanner::process_directory;
-use chrono::{Datelike, Local, NaiveTime, Timelike};
+use chrono::{Local, NaiveTime, Timelike};
 use iced::{
     executor, time,
     widget::{button, scrollable, text, text_input, Column, Container, Row},
@@ -174,7 +174,7 @@ impl Application for AutoAsrApp {
         Command::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let title = text("AutoASR - SiliconFlow").size(30);
 
         let dir_display = text(
