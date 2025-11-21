@@ -2,7 +2,7 @@
 
 ## v0.6.3 - 2025-11-21
 
-- 📦 **内置 FFmpeg/FFprobe**：GitHub Release 构建会自动从 gyan.dev 下载最新的 FFmpeg 静态包，将 `ffmpeg.exe` 与 `ffprobe.exe` 同捆到 `auto_asr.exe` 所在目录，用户只需解压就能运行，无需额外配置环境。
+- 📦 **内置 FFmpeg/FFprobe**：GitHub Release 构建会自动从 gyan.dev 下载最新的 FFmpeg 静态包，将 `ffmpeg.exe` 与 `ffprobe.exe` 同捆到 `auto_asr.exe` 所在目录，程序启动时会优先调用同目录下的可执行文件，用户只需解压就能运行，无需额外配置环境。
 
 ## v0.6.2 - 2025-11-21
 

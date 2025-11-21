@@ -38,7 +38,7 @@ AutoASR/
 
 - Rust 工具链（推荐 `rustup` 安装，最低 1.75+）
 - Windows/Mac/Linux 任意桌面环境
-- Windows Release 压缩包已内置 `ffmpeg.exe`、`ffprobe.exe`，无需再额外安装；源码构建用户仍需保证 `ffmpeg`、`ffprobe` 在 PATH 中可用。
+- Windows Release 压缩包已内置 `ffmpeg.exe`、`ffprobe.exe`，主程序运行时会优先使用与 `auto_asr.exe` 同目录的二进制；源码构建用户仍需保证 `ffmpeg`、`ffprobe` 在 PATH 中可用。
 
 ### 构建与运行
 

@@ -2,6 +2,8 @@
 
 use crate::api::transcribe_file;
 use anyhow::{anyhow, Context, Result};
+use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::{fs, process::Command, sync::mpsc::UnboundedSender, task};
@@ -36,6 +38,35 @@ const VAD_MIN_SPEECH_CHUNKS: usize = 10;
 const VAD_PADDING_CHUNKS: usize = 3;
 const VAD_DEFAULT_THRESHOLD: f32 = 0.6;
 const VAD_DEFAULT_MIN_SEGMENT_SECS: f32 = 2.0;
+
+fn resolve_tool_path(tool: &str) -> OsString {
+    fn candidate_name(tool: &str) -> String {
+        if cfg!(windows) {
+            format!("{tool}.exe")
+        } else {
+            tool.to_string()
+        }
+    }
+
+    if let Ok(mut current) = env::current_exe() {
+        if current.pop() {
+            let candidate = current.join(candidate_name(tool));
+            if candidate.exists() {
+                return candidate.into_os_string();
+            }
+        }
+    }
+
+    OsString::from(tool)
+}
+
+fn ffmpeg_program() -> OsString {
+    resolve_tool_path("ffmpeg")
+}
+
+fn ffprobe_program() -> OsString {
+    resolve_tool_path("ffprobe")
+}
 
 #[derive(Clone)]
 pub struct ScannerOptions {
@@ -216,7 +247,7 @@ impl AudioSource {
             let _ = fs::remove_file(&output).await;
         }
 
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(ffmpeg_program());
         cmd.arg("-i").arg(self.input_path());
         if let Some(map) = self.map_arg() {
             cmd.arg("-map").arg(map);
@@ -252,7 +283,7 @@ impl AudioSource {
         }
 
         let duration = (segment.end_sec - segment.start_sec).max(0.25);
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(ffmpeg_program());
         cmd.arg("-ss")
             .arg(format!("{:.3}", segment.start_sec))
             .arg("-i")
@@ -408,7 +439,7 @@ fn is_video(path: &Path) -> bool {
 
 /// 通过 FFmpeg 将特定音轨转为 MP3 音频，供 ASR 上传使用。
 async fn convert_track_to_mp3(input: &Path, stream_index: u32, output: &Path) -> Result<()> {
-    let status = Command::new("ffmpeg")
+    let status = Command::new(ffmpeg_program())
         .arg("-i")
         .arg(input)
         .arg("-map")
@@ -773,7 +804,7 @@ fn estimate_duration_from_text(text: &str) -> f64 {
 }
 
 async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(ffprobe_program())
         .arg("-v")
         .arg("error")
         .arg("-select_streams")
@@ -800,7 +831,7 @@ async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
 }
 
 async fn media_duration(path: &Path) -> Result<f64> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(ffprobe_program())
         .arg("-v")
         .arg("error")
         .arg("-show_entries")
