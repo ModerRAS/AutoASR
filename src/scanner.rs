@@ -2,7 +2,6 @@
 
 use crate::api::transcribe_file;
 use anyhow::{anyhow, Context, Result};
-use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::{fs, process::Command, sync::mpsc::UnboundedSender, task};
@@ -271,16 +270,16 @@ async fn convert_track_to_mp3(input: &Path, stream_index: u32, output: &Path) ->
     }
 }
 
-/// 基于原始文件名生成转写结果 `.txt` 路径，可附带音轨编号。
+/// 基于原始文件名生成转写结果 `.srt` 路径，可附带音轨编号。
 fn transcript_result_path(original: &Path, track_index: Option<u32>) -> PathBuf {
-    let file_name = original
-        .file_name()
+    let base_name = original
+        .file_stem()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "result".to_string());
 
     let target_name = match track_index {
-        Some(idx) => format!("{}-track{}.txt", file_name, idx),
-        None => format!("{}.txt", file_name),
+        Some(idx) => format!("{}.轨道{}.srt", base_name, idx),
+        None => format!("{}.srt", base_name),
     };
 
     original.with_file_name(target_name)
@@ -312,7 +311,7 @@ fn segment_audio_path(original: &Path, track_index: Option<u32>, segment_idx: us
 async fn ensure_audio_track(video_path: &Path, stream_index: u32) -> Result<PathBuf> {
     let output = audio_track_path(video_path, stream_index);
     if output.exists() {
-        return Ok(output);
+        let _ = fs::remove_file(&output).await;
     }
     convert_track_to_mp3(video_path, stream_index, &output).await?;
     Ok(output)
@@ -325,6 +324,9 @@ async fn process_audio_source(
     track_index: Option<u32>,
     logger: &mut ScanLogger,
 ) {
+    let cleanup_audio = audio_path != original_path;
+    let mut handled = false;
+
     if let Some(vad_cfg) = options.vad.clone() {
         match process_with_vad(
             &options.api_key,
@@ -336,7 +338,7 @@ async fn process_audio_source(
         )
         .await
         {
-            Ok(_) => return,
+            Ok(_) => handled = true,
             Err(err) => {
                 logger.info(format!(
                     "VAD 分段失败（{}），回退整段上传：{:?}",
@@ -346,14 +348,22 @@ async fn process_audio_source(
         }
     }
 
-    process_without_vad(
-        &options.api_key,
-        original_path,
-        audio_path,
-        track_index,
-        logger,
-    )
-    .await;
+    if !handled {
+        process_without_vad(
+            &options.api_key,
+            original_path,
+            audio_path,
+            track_index,
+            logger,
+        )
+        .await;
+    }
+
+    if cleanup_audio {
+        if let Err(err) = fs::remove_file(audio_path).await {
+            logger.info(format!("清理临时音轨 {:?} 失败：{}", audio_path, err));
+        }
+    }
 }
 
 async fn process_without_vad(
@@ -368,9 +378,27 @@ async fn process_without_vad(
 
     match transcribe_file(api_key, audio_path).await {
         Ok(text) => {
-            let txt_path = transcript_result_path(original_path, track_index);
-            match fs::write(&txt_path, text).await {
-                Ok(_) => logger.success(format!("完成 {}，结果输出 {:?}", target_name, txt_path)),
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                logger.error(format!("{} 的识别结果为空，跳过写入。", target_name));
+                return;
+            }
+
+            let duration = match media_duration(audio_path).await {
+                Ok(value) => value.max(0.5),
+                Err(e) => {
+                    logger.info(format!(
+                        "无法获取 {:?} 的时长（{}），使用估算值。",
+                        audio_path, e
+                    ));
+                    estimate_duration_from_text(trimmed)
+                }
+            };
+
+            let srt_content = build_srt_entry(1, 0.0, duration, trimmed);
+            let srt_path = transcript_result_path(original_path, track_index);
+            match fs::write(&srt_path, srt_content).await {
+                Ok(_) => logger.success(format!("完成 {}，结果输出 {:?}", target_name, srt_path)),
                 Err(e) => logger.error(format!("写入 {} 失败：{}", target_name, e)),
             }
         }
@@ -400,26 +428,29 @@ async fn process_with_vad(
 
     logger.info(format!("检测到 {} 段语音，逐段上传。", segments.len()));
 
-    let mut combined = String::new();
+    let mut entries: Vec<String> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
         let segment_audio = export_segment_audio(audio_path, track_index, idx + 1, segment).await?;
         match transcribe_file(api_key, &segment_audio).await {
             Ok(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    logger.info(format!("分段 {} 结果为空，已跳过。", idx + 1));
+                    let _ = fs::remove_file(&segment_audio).await;
+                    continue;
+                }
                 logger.success(format!(
                     "分段 {} 完成（{} - {}）。",
                     idx + 1,
                     format_timestamp(segment.start_sec),
                     format_timestamp(segment.end_sec)
                 ));
-                let _ = writeln!(
-                    &mut combined,
-                    "[片段 {} | {} - {}]",
-                    idx + 1,
-                    format_timestamp(segment.start_sec),
-                    format_timestamp(segment.end_sec)
-                );
-                let _ = writeln!(&mut combined, "{}", text.trim());
-                combined.push('\n');
+                entries.push(build_srt_entry(
+                    entries.len() + 1,
+                    segment.start_sec,
+                    segment.end_sec,
+                    trimmed,
+                ));
             }
             Err(e) => {
                 logger.error(format!("分段 {} 调用 API 失败：{}", idx + 1, e));
@@ -428,15 +459,16 @@ async fn process_with_vad(
         let _ = fs::remove_file(&segment_audio).await;
     }
 
-    if combined.trim().is_empty() {
+    if entries.is_empty() {
         return Err(anyhow!("所有分段均转写失败"));
     }
 
-    let txt_path = transcript_result_path(original_path, track_index);
-    fs::write(&txt_path, combined).await?;
+    let srt_path = transcript_result_path(original_path, track_index);
+    let srt_content: String = entries.concat();
+    fs::write(&srt_path, srt_content).await?;
     logger.success(format!(
         "{} VAD 分段完成，结果输出 {:?}",
-        display_name, txt_path
+        display_name, srt_path
     ));
     Ok(())
 }
@@ -621,6 +653,35 @@ fn format_timestamp(seconds: f64) -> String {
     }
 }
 
+fn format_srt_timestamp(seconds: f64) -> String {
+    let total_ms = (seconds * 1000.0).round().max(0.0) as u64;
+    let hours = total_ms / 3_600_000;
+    let minutes = (total_ms % 3_600_000) / 60_000;
+    let secs = (total_ms % 60_000) / 1000;
+    let millis = total_ms % 1000;
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, millis)
+}
+
+fn sanitize_srt_text(input: &str) -> String {
+    input.replace("\r\n", "\n").trim().to_string()
+}
+
+fn build_srt_entry(index: usize, start: f64, end: f64, text: &str) -> String {
+    let safe_end = if end <= start { start + 0.5 } else { end };
+    format!(
+        "{idx}\n{start} --> {end}\n{body}\n\n",
+        idx = index,
+        start = format_srt_timestamp(start),
+        end = format_srt_timestamp(safe_end),
+        body = sanitize_srt_text(text)
+    )
+}
+
+fn estimate_duration_from_text(text: &str) -> f64 {
+    let chars = text.chars().count() as f64;
+    (chars / 15.0).max(5.0)
+}
+
 async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
     let output = Command::new("ffprobe")
         .arg("-v")
@@ -646,6 +707,33 @@ async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
         .collect();
 
     Ok(indices)
+}
+
+async fn media_duration(path: &Path) -> Result<f64> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-show_entries")
+        .arg("format=duration")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "ffprobe 读取 {:?} 时长失败，退出状态：{}",
+            path,
+            output.status
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| line.trim().parse::<f64>().ok())
+        .ok_or_else(|| anyhow!("无法解析 {:?} 的时长", path))
 }
 
 fn track_suffix(track_index: Option<u32>, segment_index: Option<usize>) -> String {
@@ -683,17 +771,14 @@ mod tests {
     fn transcript_path_preserves_original_name() {
         let path = Path::new("C:/tmp/input/video.mp4");
         let txt = transcript_result_path(path, None);
-        assert_eq!(txt, PathBuf::from("C:/tmp/input/video.mp4.txt"));
+        assert_eq!(txt, PathBuf::from("C:/tmp/input/video.srt"));
 
         let track_txt = transcript_result_path(path, Some(2));
-        assert_eq!(
-            track_txt,
-            PathBuf::from("C:/tmp/input/video.mp4-track2.txt")
-        );
+        assert_eq!(track_txt, PathBuf::from("C:/tmp/input/video.轨道2.srt"));
 
         let no_ext = Path::new("/tmp/audio");
         let txt2 = transcript_result_path(no_ext, None);
-        assert_eq!(txt2, PathBuf::from("/tmp/audio.txt"));
+        assert_eq!(txt2, PathBuf::from("/tmp/audio.srt"));
     }
 
     #[test]
