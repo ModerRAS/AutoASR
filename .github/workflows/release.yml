@@ -55,25 +55,38 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dist = "dist"
-          if (Test-Path $dist) {
-            Remove-Item $dist -Recurse -Force
+          $distRoot = "dist"
+          if (Test-Path $distRoot) { Remove-Item $distRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
+
+          $fullDir = Join-Path $distRoot 'with_ffmpeg'
+          $slimDir = Join-Path $distRoot 'slim'
+          foreach ($dir in @($fullDir, $slimDir)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item target/release/auto_asr.exe $dir/
+            Copy-Item README.md $dir/
+            Copy-Item LICENSE $dir/
           }
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          Copy-Item target/release/auto_asr.exe $dist/
-          Copy-Item README.md $dist/
-          Copy-Item LICENSE $dist/
-          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffmpeg_path }}' (Join-Path $dist 'ffmpeg.exe')
-          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffprobe_path }}' (Join-Path $dist 'ffprobe.exe')
-          $zipPath = "auto_asr-windows.zip"
-          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-          Compress-Archive -Path "$dist/*" -DestinationPath $zipPath
+
+          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffmpeg_path }}' (Join-Path $fullDir 'ffmpeg.exe')
+          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffprobe_path }}' (Join-Path $fullDir 'ffprobe.exe')
+
+          $fullZip = 'auto_asr-windows-full.zip'
+          $slimZip = 'auto_asr-windows-slim.zip'
+          foreach ($zip in @($fullZip, $slimZip)) {
+            if (Test-Path $zip) { Remove-Item $zip -Force }
+          }
+
+          Compress-Archive -Path "$fullDir/*" -DestinationPath $fullZip
+          Compress-Archive -Path "$slimDir/*" -DestinationPath $slimZip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: auto_asr-windows-release
-          path: auto_asr-windows.zip
+          path: |
+            auto_asr-windows-full.zip
+            auto_asr-windows-slim.zip
 
       - name: Extract release notes
         id: release_notes
@@ -120,6 +133,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: auto_asr-windows.zip
+          files: |
+            auto_asr-windows-full.zip
+            auto_asr-windows-slim.zip
           body: ${{ steps.release_notes.outputs.body }}
           generate_release_notes: false

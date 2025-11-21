@@ -38,7 +38,7 @@ AutoASR/
 
 - Rust 工具链（推荐 `rustup` 安装，最低 1.75+）
 - Windows/Mac/Linux 任意桌面环境
-- Windows Release 压缩包已内置 `ffmpeg.exe`、`ffprobe.exe`，主程序运行时会优先使用与 `auto_asr.exe` 同目录的二进制；源码构建用户仍需保证 `ffmpeg`、`ffprobe` 在 PATH 中可用。
+- Windows Release 提供 **Full**（自带 `ffmpeg.exe`、`ffprobe.exe`）与 **Slim**（不含 FFmpeg）的双版本压缩包：Full 解压即用，Slim 适合已有 FFmpeg/FFprobe 环境的用户。源码构建仍需确保两条命令可用。
 
 ### 构建与运行
 
@@ -85,7 +85,12 @@ vad_min_segment_secs = 2.0
 | Workflow | 触发条件 | 说明 |
 | --- | --- | --- |
 | `ci.yml` | push / PR 到 master | 运行 `cargo fmt`, `cargo clippy`, `cargo test`, `cargo build`，并上传 Windows 构建产物作为 artifact。 |
-| `release.yml` | 推送 `v*` 标签或手动触发 | 在 Windows runner 上构建 release，下载最新 FFmpeg 静态包并同捆 `auto_asr.exe + ffmpeg.exe + ffprobe.exe + README + LICENSE`，再通过 softprops/action-gh-release 发布。 |
+| `release.yml` | 推送 `v*` 标签或手动触发 | 在 Windows runner 上构建 release，下载最新 FFmpeg 静态包并输出 Full（含 FFmpeg/FFprobe）与 Slim（纯 exe）两份 zip，同步发布到 GitHub Release。 |
+
+### Release 下载提示
+
+- `auto_asr-windows-full.zip`：包含 `auto_asr.exe` + `ffmpeg.exe` + `ffprobe.exe` + 文档，推荐给未安装 FFmpeg 的用户。
+- `auto_asr-windows-slim.zip`：只含 `auto_asr.exe` 与文档，便于已有 FFmpeg 环境的用户减少下载体积。
 
 发布新版本步骤：
 

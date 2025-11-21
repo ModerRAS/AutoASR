@@ -1,5 +1,9 @@
 # AutoASR Releases
 
+## v0.6.4 - 2025-11-21
+
+- 📦 **Full/Slim 双版本发布**：Release workflow 同时输出 `auto_asr-windows-full.zip`（随附 `ffmpeg.exe` / `ffprobe.exe`）与 `auto_asr-windows-slim.zip`（纯 `auto_asr.exe`），方便已有 FFmpeg 环境的用户选择更小的下载包。
+
 ## v0.6.3 - 2025-11-21
 
 - 📦 **内置 FFmpeg/FFprobe**：GitHub Release 构建会自动从 gyan.dev 下载最新的 FFmpeg 静态包，将 `ffmpeg.exe` 与 `ffprobe.exe` 同捆到 `auto_asr.exe` 所在目录，程序启动时会优先调用同目录下的可执行文件，用户只需解压就能运行，无需额外配置环境。
