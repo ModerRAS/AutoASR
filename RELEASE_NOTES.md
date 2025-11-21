@@ -1,5 +1,9 @@
 # AutoASR Releases
 
+## v0.6.1 - 2025-11-21
+
+- 🛠️ **Release Flow 修复**：修正 GitHub Actions 发布任务写入 `GITHUB_OUTPUT` 的方式，确保新的标签可以正确同步 `RELEASE_NOTES.md` 到 Release 描述。
+
 ## v0.6.0 - 2025-11-21
 
 - ♻️ **临时音轨自动清理**：视频音轨只在转写期间生成短暂的 MP3，中间文件在任务结束后即刻删除，避免磁盘被占满。
