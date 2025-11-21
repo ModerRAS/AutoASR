@@ -44,6 +44,7 @@ enum Message {
     VadThresholdChanged(f32),
     VadMinDurationChanged(f32),
     ToggleRunning,
+    RunOnce,
     Tick(chrono::DateTime<chrono::Local>),
     ScanFinished(Result<Vec<ScanLog>, String>),
     ScanProgress(Option<ScanLog>),
@@ -63,7 +64,7 @@ impl Application for AutoAsrApp {
             Self {
                 config,
                 is_running: false,
-                logs: vec![ScanLog::new(ScanLogLevel::Info, "Application started.")],
+                logs: vec![ScanLog::new(ScanLogLevel::Info, "应用已启动。")],
                 last_run_date: None,
                 is_processing: false,
                 scan_progress_rx: None,
@@ -73,7 +74,7 @@ impl Application for AutoAsrApp {
     }
 
     fn title(&self) -> String {
-        String::from("AutoASR - SiliconFlow")
+        String::from("AutoASR - SiliconFlow 语音助手")
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -92,7 +93,7 @@ impl Application for AutoAsrApp {
             Message::DirectorySelected(path) => {
                 if let Some(p) = path {
                     self.config.directory = Some(p.to_string_lossy().to_string());
-                    self.log_info(format!("Directory selected: {:?}", p));
+                    self.log_info(format!("已选择目录：{:?}", p));
                 }
             }
             Message::ApiKeyChanged(key) => {
@@ -104,9 +105,9 @@ impl Application for AutoAsrApp {
             Message::VadToggled(enabled) => {
                 self.config.vad_enabled = enabled;
                 let note = if enabled {
-                    "Voice Activity Detection enabled."
+                    "已启用 VAD 语音分段。"
                 } else {
-                    "Voice Activity Detection disabled."
+                    "已关闭 VAD 语音分段。"
                 };
                 self.log_info(note);
             }
@@ -119,17 +120,29 @@ impl Application for AutoAsrApp {
             Message::ToggleRunning => {
                 if self.is_running {
                     self.is_running = false;
-                    self.log_info("Scheduler stopped.");
+                    self.log_info("定时任务已停止。");
                 } else {
                     match self.validate_ready_state() {
                         Ok(_) => {
                             self.is_running = true;
                             self.last_run_date = None;
-                            self.log_success("Scheduler started.");
+                            self.log_success("定时任务已启动。");
                         }
                         Err(err) => {
-                            self.log_error(format!("Cannot start scheduler: {}", err));
+                            self.log_error(format!("无法启动定时任务：{}", err));
                         }
+                    }
+                }
+            }
+            Message::RunOnce => {
+                if self.is_processing {
+                    self.log_info("已有扫描任务在进行中，请稍候。");
+                } else {
+                    match self.manual_ready_state() {
+                        Ok(dir_path) => {
+                            return self.start_scan(dir_path, "立即扫描开始……".to_string());
+                        }
+                        Err(err) => self.log_error(err),
                     }
                 }
             }
@@ -141,8 +154,8 @@ impl Application for AutoAsrApp {
                 );
             }
             Message::ConfigSaved(res) => match res {
-                Ok(_) => self.log_success("Configuration saved."),
-                Err(e) => self.log_error(format!("Failed to save config: {}", e)),
+                Ok(_) => self.log_success("配置已保存。"),
+                Err(e) => self.log_error(format!("保存配置失败：{}", e)),
             },
             Message::Tick(now) => {
                 if self.is_running && !self.is_processing {
@@ -150,7 +163,7 @@ impl Application for AutoAsrApp {
                         match NaiveTime::parse_from_str(&self.config.schedule_time, "%H:%M") {
                             Ok(t) => t,
                             Err(_) => {
-                                self.log_error("Invalid schedule time format. Scheduler stopped.");
+                                self.log_error("时间格式无效，已停止定时任务。");
                                 self.is_running = false;
                                 return Command::none();
                             }
@@ -164,35 +177,12 @@ impl Application for AutoAsrApp {
                         && self.last_run_date.as_deref() != Some(&current_date)
                     {
                         if let Some(dir) = self.config.directory.clone() {
-                            self.is_processing = true;
                             self.last_run_date = Some(current_date);
-                            self.log_info("Starting scheduled scan...");
-
                             let dir_path = PathBuf::from(dir);
-                            let api_key = self.config.api_key.clone();
-                            let vad = if self.config.vad_enabled {
-                                Some(VadConfig::from_user_settings(
-                                    self.config.vad_threshold,
-                                    self.config.vad_min_segment_secs,
-                                ))
-                            } else {
-                                None
-                            };
-
-                            let (progress_tx, progress_rx) = mpsc::unbounded_channel();
-                            let progress_handle = Arc::new(Mutex::new(progress_rx));
-                            self.scan_progress_rx = Some(progress_handle.clone());
-
-                            let options = ScannerOptions { api_key, vad };
-                            let scan_cmd = Command::perform(
-                                process_directory(dir_path, options, Some(progress_tx)),
-                                |res| Message::ScanFinished(res.map_err(|e| e.to_string())),
-                            );
-                            let progress_cmd = AutoAsrApp::listen_scan_progress(progress_handle);
-
-                            return Command::batch(vec![scan_cmd, progress_cmd]);
+                            return self
+                                .start_scan(dir_path, "到达定时时间，开始扫描……".to_string());
                         } else {
-                            self.log_error("Scheduled time reached but no directory selected.");
+                            self.log_error("到达定时时间但尚未选择目录。");
                         }
                     }
                 }
@@ -203,10 +193,10 @@ impl Application for AutoAsrApp {
                 match res {
                     Ok(new_logs) => {
                         self.logs.extend(new_logs);
-                        self.log_success("Scan completed.");
+                        self.log_success("扫描流程完成。");
                     }
                     Err(e) => {
-                        self.log_error(format!("Scan error: {}", e));
+                        self.log_error(format!("扫描过程中出现错误：{}", e));
                     }
                 }
             }
@@ -226,29 +216,23 @@ impl Application for AutoAsrApp {
     fn view(&self) -> Element<'_, Message> {
         let font = Self::preferred_font();
 
-        let title = text("AutoASR - SiliconFlow").font(font).size(30);
+        let title = text("AutoASR 语音转写助手").font(font).size(30);
 
-        let dir_display = text(
-            self.config
-                .directory
-                .as_deref()
-                .unwrap_or("No directory selected"),
-        )
-        .font(font);
-        let dir_btn =
-            button(text("Select Directory").font(font)).on_press(Message::SelectDirectory);
+        let dir_display =
+            text(self.config.directory.as_deref().unwrap_or("尚未选择目录")).font(font);
+        let dir_btn = button(text("选择目录").font(font)).on_press(Message::SelectDirectory);
 
-        let api_key_input = text_input("Enter API Key", &self.config.api_key)
+        let api_key_input = text_input("请输入 API 密钥", &self.config.api_key)
             .on_input(Message::ApiKeyChanged)
             .padding(10)
             .font(font);
 
-        let schedule_input = text_input("Schedule Time (HH:MM)", &self.config.schedule_time)
+        let schedule_input = text_input("执行时间（HH:MM）", &self.config.schedule_time)
             .on_input(Message::ScheduleTimeChanged)
             .padding(10)
             .font(font);
 
-        let vad_toggle = checkbox("Enable VAD-based segmentation", self.config.vad_enabled)
+        let vad_toggle = checkbox("启用 VAD 语音分段", self.config.vad_enabled)
             .on_toggle(Message::VadToggled)
             .spacing(10)
             .text_size(16)
@@ -274,7 +258,7 @@ impl Application for AutoAsrApp {
                 Row::new()
                     .spacing(10)
                     .align_items(Alignment::Center)
-                    .push(text("VAD Threshold").font(font))
+                    .push(text("VAD 阈值").font(font))
                     .push(vad_threshold_slider)
                     .push(text(format!("{:.2}", self.config.vad_threshold)).font(font)),
             )
@@ -282,15 +266,15 @@ impl Application for AutoAsrApp {
                 Row::new()
                     .spacing(10)
                     .align_items(Alignment::Center)
-                    .push(text("Min Segment (s)").font(font))
+                    .push(text("最短片段（秒）").font(font))
                     .push(vad_min_duration_slider)
-                    .push(text(format!("{:.1}s", self.config.vad_min_segment_secs)).font(font)),
+                    .push(text(format!("{:.1}秒", self.config.vad_min_segment_secs)).font(font)),
             );
 
         let toggle_btn = button(if self.is_running {
-            text("Stop Scheduler").font(font)
+            text("停止定时").font(font)
         } else {
-            text("Start Scheduler").font(font)
+            text("启动定时").font(font)
         })
         .on_press(Message::ToggleRunning)
         .padding(10)
@@ -300,7 +284,14 @@ impl Application for AutoAsrApp {
             iced::theme::Button::Primary
         });
 
-        let save_btn = button(text("Save Settings").font(font))
+        let mut run_now_btn = button(text("立即扫描").font(font))
+            .padding(10)
+            .style(iced::theme::Button::Secondary);
+        if !self.is_processing {
+            run_now_btn = run_now_btn.on_press(Message::RunOnce);
+        }
+
+        let save_btn = button(text("保存设置").font(font))
             .on_press(Message::SaveConfig)
             .padding(10);
 
@@ -317,17 +308,23 @@ impl Application for AutoAsrApp {
             .push(
                 Column::new()
                     .spacing(5)
-                    .push(text("API Key:").font(font))
+                    .push(text("API 密钥：").font(font))
                     .push(api_key_input),
             )
             .push(
                 Column::new()
                     .spacing(5)
-                    .push(text("Schedule Time:").font(font))
+                    .push(text("执行时间：").font(font))
                     .push(schedule_input),
             )
             .push(vad_controls)
-            .push(Row::new().spacing(20).push(toggle_btn).push(save_btn));
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .push(toggle_btn)
+                    .push(run_now_btn)
+                    .push(save_btn),
+            );
 
         const MAX_LOGS: usize = 500;
         let logs_content =
@@ -353,7 +350,7 @@ impl Application for AutoAsrApp {
             .spacing(20)
             .padding(20)
             .push(controls)
-            .push(text("Logs:").font(font).size(20))
+            .push(text("日志").font(font).size(20))
             .push(
                 Container::new(logs_scroll)
                     .style(iced::theme::Container::Box)
@@ -420,9 +417,9 @@ impl AutoAsrApp {
 
     fn log_visuals(level: ScanLogLevel) -> (&'static str, Color) {
         match level {
-            ScanLogLevel::Info => ("INFO", Color::from_rgb(0.75, 0.75, 0.78)),
-            ScanLogLevel::Success => ("OK", Color::from_rgb(0.3, 0.75, 0.4)),
-            ScanLogLevel::Error => ("ERR", Color::from_rgb(0.92, 0.32, 0.32)),
+            ScanLogLevel::Info => ("信息", Color::from_rgb(0.75, 0.75, 0.78)),
+            ScanLogLevel::Success => ("成功", Color::from_rgb(0.3, 0.75, 0.4)),
+            ScanLogLevel::Error => ("错误", Color::from_rgb(0.92, 0.32, 0.32)),
         }
     }
 
@@ -432,20 +429,66 @@ impl AutoAsrApp {
             .config
             .directory
             .as_ref()
-            .ok_or_else(|| "Please select a directory.".to_string())?;
+            .ok_or_else(|| "请先选择媒体目录。".to_string())?;
 
         if !Path::new(dir).exists() {
-            return Err("Selected directory does not exist.".to_string());
+            return Err("选择的目录不存在。".to_string());
         }
 
         if self.config.api_key.trim().is_empty() {
-            return Err("API key is required.".to_string());
+            return Err("需要填写 API 密钥。".to_string());
         }
 
         if NaiveTime::parse_from_str(&self.config.schedule_time, "%H:%M").is_err() {
-            return Err("Schedule time must be in HH:MM format.".to_string());
+            return Err("执行时间必须符合 HH:MM 格式。".to_string());
         }
 
         Ok(())
+    }
+
+    fn manual_ready_state(&self) -> Result<PathBuf, String> {
+        let dir = self
+            .config
+            .directory
+            .as_ref()
+            .ok_or_else(|| "请先选择媒体目录。".to_string())?;
+
+        if !Path::new(dir).exists() {
+            return Err("选择的目录不存在。".to_string());
+        }
+
+        if self.config.api_key.trim().is_empty() {
+            return Err("需要填写 API 密钥。".to_string());
+        }
+
+        Ok(PathBuf::from(dir))
+    }
+
+    fn start_scan(&mut self, dir_path: PathBuf, reason: String) -> Command<Message> {
+        self.is_processing = true;
+        self.log_info(reason);
+
+        let api_key = self.config.api_key.clone();
+        let vad = if self.config.vad_enabled {
+            Some(VadConfig::from_user_settings(
+                self.config.vad_threshold,
+                self.config.vad_min_segment_secs,
+            ))
+        } else {
+            None
+        };
+
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+        let progress_handle = Arc::new(Mutex::new(progress_rx));
+        self.scan_progress_rx = Some(progress_handle.clone());
+
+        let options = ScannerOptions { api_key, vad };
+        let scan_cmd = Command::perform(
+            process_directory(dir_path, options, Some(progress_tx)),
+            |res| Message::ScanFinished(res.map_err(|e| e.to_string())),
+        );
+        let progress_cmd = AutoAsrApp::listen_scan_progress(progress_handle);
+
+        Command::batch(vec![scan_cmd, progress_cmd])
     }
 }

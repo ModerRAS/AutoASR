@@ -26,7 +26,7 @@ pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> 
         .to_string_lossy()
         .to_string();
 
-    // Simple mime type detection
+    // 简易 MIME 类型检测
     let mime_type = if let Some(ext) = file_path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
         match ext_str.as_str() {
@@ -54,7 +54,7 @@ pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> 
         .post(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .multipart(form)
-        .timeout(std::time::Duration::from_secs(3600)) // Long timeout for large files
+        .timeout(std::time::Duration::from_secs(3600)) // 大文件需要更长超时
         .send()
         .await?;
 
@@ -64,7 +64,7 @@ pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> 
     if status.is_success() {
         return serde_json::from_str::<SuccessResponse>(&text)
             .map(|succ| succ.text)
-            .map_err(|_| anyhow!("Failed to parse success response: {}", text));
+            .map_err(|_| anyhow!("解析成功响应失败：{}", text));
     }
 
     Err(anyhow!(format_api_error(status, &text)))
@@ -80,7 +80,7 @@ fn format_api_error(status: StatusCode, body: &str) -> String {
 
             if code.is_some() || message.is_some() || data.is_some() {
                 return format!(
-                    "API Error (HTTP {}, code {:?}): {} {}",
+                    "API 错误（HTTP {}，code {:?}）：{} {}",
                     status,
                     code,
                     message.unwrap_or(""),
@@ -90,14 +90,14 @@ fn format_api_error(status: StatusCode, body: &str) -> String {
                 .to_string();
             }
         } else if let Some(text) = value.as_str() {
-            return format!("API Error (HTTP {}): {}", status, text);
+            return format!("API 错误（HTTP {}）：{}", status, text);
         }
     }
 
     // 429 specific plain message
     if status == StatusCode::TOO_MANY_REQUESTS {
-        return format!("Rate limited (HTTP 429): {}", body);
+        return format!("已被限流（HTTP 429）：{}", body);
     }
 
-    format!("API Error (HTTP {}): {}", status, body)
+    format!("API 错误（HTTP {}）：{}", status, body)
 }

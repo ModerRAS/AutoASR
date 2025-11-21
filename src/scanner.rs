@@ -126,13 +126,11 @@ pub async fn process_directory(
     let api_key = options.api_key.clone();
 
     if api_key.trim().is_empty() {
-        return Err(anyhow!(
-            "API key is empty. Please configure it before running."
-        ));
+        return Err(anyhow!("API Key 为空，请在设置中填写后再运行。"));
     }
 
     if !dir.exists() {
-        return Err(anyhow!("Directory does not exist: {:?}", dir));
+        return Err(anyhow!("目录不存在：{:?}", dir));
     }
 
     for entry in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
@@ -269,7 +267,7 @@ async fn convert_track_to_mp3(input: &Path, stream_index: u32, output: &Path) ->
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow!("FFmpeg exited with status: {}", status))
+        Err(anyhow!("FFmpeg 转码音轨失败，退出状态：{}", status))
     }
 }
 
@@ -415,7 +413,7 @@ async fn process_with_vad(
                 ));
                 let _ = writeln!(
                     &mut combined,
-                    "[Segment {} | {} - {}]",
+                    "[片段 {} | {} - {}]",
                     idx + 1,
                     format_timestamp(segment.start_sec),
                     format_timestamp(segment.end_sec)
@@ -463,7 +461,7 @@ async fn convert_to_pcm16(audio_path: &Path) -> Result<PathBuf> {
         Ok(output)
     } else {
         Err(anyhow!(
-            "FFmpeg failed to convert audio for VAD: {}",
+            "FFmpeg 转换音频用于 VAD 时失败，退出状态：{}",
             status
         ))
     }
@@ -475,7 +473,7 @@ async fn read_wav_samples(path: &Path) -> Result<Vec<i16>> {
         let mut reader = hound::WavReader::open(&path)?;
         let spec = reader.spec();
         if spec.sample_rate != VAD_SAMPLE_RATE || spec.channels != 1 || spec.bits_per_sample != 16 {
-            return Err(anyhow!("Unexpected WAV format generated for VAD"));
+            return Err(anyhow!("生成的 WAV 格式不符合 VAD 要求"));
         }
 
         let mut samples = Vec::new();
@@ -531,7 +529,7 @@ fn detect_speech_segments(samples: &[i16], cfg: &VadConfig) -> Result<Vec<Speech
         .sample_rate(VAD_SAMPLE_RATE)
         .chunk_size(VAD_CHUNK_SIZE)
         .build()
-        .context("Failed to initialize voice activity detector")?;
+        .context("语音活动检测器初始化失败")?;
 
     let mut segments = Vec::new();
     let mut current: Option<SegmentState> = None;
@@ -606,7 +604,7 @@ async fn export_segment_audio(
     if status.success() {
         Ok(output)
     } else {
-        Err(anyhow!("FFmpeg failed to cut audio segment: {}", status))
+        Err(anyhow!("FFmpeg 裁剪语音片段失败，退出状态：{}", status))
     }
 }
 
@@ -638,7 +636,7 @@ async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
         .await?;
 
     if !output.status.success() {
-        return Err(anyhow!("ffprobe exited with status: {}", output.status));
+        return Err(anyhow!("ffprobe 解析音轨失败，退出状态：{}", output.status));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -652,9 +650,9 @@ async fn audio_stream_indices(path: &Path) -> Result<Vec<u32>> {
 
 fn track_suffix(track_index: Option<u32>, segment_index: Option<usize>) -> String {
     match (track_index, segment_index) {
-        (Some(track), Some(segment)) => format!(" (track {} / segment {})", track, segment),
-        (Some(track), None) => format!(" (track {})", track),
-        (None, Some(segment)) => format!(" (segment {})", segment),
+        (Some(track), Some(segment)) => format!("（音轨 {} · 片段 {}）", track, segment),
+        (Some(track), None) => format!("（音轨 {}）", track),
+        (None, Some(segment)) => format!("（片段 {}）", segment),
         (None, None) => String::new(),
     }
 }
