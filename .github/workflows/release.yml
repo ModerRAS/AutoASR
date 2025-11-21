@@ -85,9 +85,10 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($body)) {
             $body = "尚无发布说明。"
           }
-          "body<<'EOF'" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          $body | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $marker = 'EOF'
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<$marker"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $body
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $marker
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
