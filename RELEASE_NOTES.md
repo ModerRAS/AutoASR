@@ -3,6 +3,7 @@
 ## v0.6.4 - 2025-11-21
 
 - 📦 **Full/Slim 双版本发布**：Release workflow 同时输出 `auto_asr-windows-full.zip`（随附 `ffmpeg.exe` / `ffprobe.exe`）与 `auto_asr-windows-slim.zip`（纯 `auto_asr.exe`），方便已有 FFmpeg 环境的用户选择更小的下载包。
+- 🧩 **VAD 静音补间**：语音活动检测到的静音间隔也会被拆分成补间片段上传，确保整段音频都被识别，避免阈值设置导致的漏句或被割裂的语音。
 
 ## v0.6.3 - 2025-11-21
 

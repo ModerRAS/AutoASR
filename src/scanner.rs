@@ -38,6 +38,8 @@ const VAD_MIN_SPEECH_CHUNKS: usize = 10;
 const VAD_PADDING_CHUNKS: usize = 3;
 const VAD_DEFAULT_THRESHOLD: f32 = 0.6;
 const VAD_DEFAULT_MIN_SEGMENT_SECS: f32 = 2.0;
+const MIN_EXPORT_DURATION_SEC: f64 = 0.25;
+const MIN_SEGMENT_EPS: f64 = 1e-3;
 
 fn resolve_tool_path(tool: &str) -> OsString {
     fn candidate_name(tool: &str) -> String {
@@ -282,7 +284,7 @@ impl AudioSource {
             let _ = fs::remove_file(&output).await;
         }
 
-        let duration = (segment.end_sec - segment.start_sec).max(0.25);
+        let duration = (segment.end_sec - segment.start_sec).max(MIN_EXPORT_DURATION_SEC);
         let mut cmd = Command::new(ffmpeg_program());
         cmd.arg("-ss")
             .arg(format!("{:.3}", segment.start_sec))
@@ -596,13 +598,30 @@ async fn process_with_vad(
     let pcm_path = source.convert_to_pcm16().await?;
     let samples = read_wav_samples(&pcm_path).await?;
     let _ = fs::remove_file(&pcm_path).await;
+    let total_duration = samples.len() as f64 / VAD_SAMPLE_RATE as f64;
 
-    let segments = detect_speech_segments(&samples, vad_cfg)?;
-    if segments.is_empty() {
+    let speech_segments = detect_speech_segments(&samples, vad_cfg)?;
+    if speech_segments.is_empty() {
         return Err(anyhow!("未检测到有效语音"));
     }
 
-    logger.info(format!("检测到 {} 段语音，逐段上传。", segments.len()));
+    let segments = expand_segments_with_gaps(&speech_segments, total_duration);
+    let extra_gaps = segments
+        .iter()
+        .filter(|seg| seg.kind == SegmentKind::Gap)
+        .count();
+    if extra_gaps > 0 {
+        logger.info(format!(
+            "检测到 {} 段语音，额外包含 {} 个静音覆盖区。",
+            speech_segments.len(),
+            extra_gaps
+        ));
+    } else {
+        logger.info(format!(
+            "检测到 {} 段语音，逐段上传。",
+            speech_segments.len()
+        ));
+    }
 
     let mut entries: Vec<String> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
@@ -615,9 +634,14 @@ async fn process_with_vad(
                     let _ = fs::remove_file(&segment_audio).await;
                     continue;
                 }
+                let label = match segment.kind {
+                    SegmentKind::Speech => "语音",
+                    SegmentKind::Gap => "补间",
+                };
                 logger.success(format!(
-                    "分段 {} 完成（{} - {}）。",
+                    "分段 {} [{}] 完成（{} - {}）。",
                     idx + 1,
+                    label,
                     format_timestamp(segment.start_sec),
                     format_timestamp(segment.end_sec)
                 ));
@@ -682,17 +706,41 @@ impl SegmentState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SegmentKind {
+    Speech,
+    Gap,
+}
+
 #[derive(Clone, Debug)]
 struct SpeechSegment {
     start_sec: f64,
     end_sec: f64,
+    kind: SegmentKind,
 }
 
 impl SpeechSegment {
-    fn from_chunks(start_chunk: usize, end_chunk: usize) -> Self {
+    fn new(start_sec: f64, end_sec: f64, kind: SegmentKind) -> Self {
         Self {
-            start_sec: chunk_to_time(start_chunk),
-            end_sec: chunk_to_time(end_chunk),
+            start_sec,
+            end_sec,
+            kind,
+        }
+    }
+
+    fn from_chunks(start_chunk: usize, end_chunk: usize) -> Self {
+        Self::new(
+            chunk_to_time(start_chunk),
+            chunk_to_time(end_chunk),
+            SegmentKind::Speech,
+        )
+    }
+
+    fn try_new(start_sec: f64, end_sec: f64, kind: SegmentKind) -> Option<Self> {
+        if end_sec - start_sec <= MIN_SEGMENT_EPS {
+            None
+        } else {
+            Some(Self::new(start_sec, end_sec, kind))
         }
     }
 }
@@ -759,6 +807,40 @@ fn finalize_segment(state: &SegmentState, cfg: &VadConfig, segments: &mut Vec<Sp
             state.last_active_chunk + 1,
         ));
     }
+}
+
+fn expand_segments_with_gaps(
+    speech_segments: &[SpeechSegment],
+    total_duration: f64,
+) -> Vec<SpeechSegment> {
+    if speech_segments.is_empty() {
+        return Vec::new();
+    }
+
+    let mut sorted = speech_segments.to_vec();
+    sorted.sort_by(|a, b| {
+        a.start_sec
+            .partial_cmp(&b.start_sec)
+            .unwrap_or(std::cmp::Ordering::Less)
+    });
+
+    let mut expanded = Vec::new();
+    let mut cursor = 0.0f64;
+
+    for segment in sorted {
+        if let Some(gap) = SpeechSegment::try_new(cursor, segment.start_sec, SegmentKind::Gap) {
+            expanded.push(gap);
+        }
+        let end = segment.end_sec;
+        expanded.push(segment);
+        cursor = end;
+    }
+
+    if let Some(tail) = SpeechSegment::try_new(cursor, total_duration, SegmentKind::Gap) {
+        expanded.push(tail);
+    }
+
+    expanded
 }
 
 fn format_timestamp(seconds: f64) -> String {
@@ -907,5 +989,23 @@ mod tests {
         let path = Path::new("/media/sample.mkv");
         let mp3 = audio_track_path(path, 1);
         assert_eq!(mp3, PathBuf::from("/media/sample.mkv-track1.mp3"));
+    }
+
+    #[test]
+    fn expand_segments_adds_gap_coverage() {
+        let speech_segments = vec![
+            SpeechSegment::new(0.0, 2.0, SegmentKind::Speech),
+            SpeechSegment::new(4.0, 6.0, SegmentKind::Speech),
+        ];
+        let expanded = expand_segments_with_gaps(&speech_segments, 8.0);
+        assert_eq!(expanded.len(), 4);
+        assert_eq!(expanded[0].kind, SegmentKind::Speech);
+        assert_eq!(expanded[1].kind, SegmentKind::Gap);
+        assert!((expanded[1].start_sec - 2.0).abs() < 1e-6);
+        assert!((expanded[1].end_sec - 4.0).abs() < 1e-6);
+        assert_eq!(expanded[2].kind, SegmentKind::Speech);
+        assert_eq!(expanded[3].kind, SegmentKind::Gap);
+        assert!((expanded[3].start_sec - 6.0).abs() < 1e-6);
+        assert!((expanded[3].end_sec - 8.0).abs() < 1e-6);
     }
 }
