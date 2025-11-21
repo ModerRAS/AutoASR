@@ -114,6 +114,175 @@ enum PendingJob {
     Video { path: PathBuf, tracks: Vec<u32> },
 }
 
+struct MaterializedAudio {
+    path: PathBuf,
+    cleanup: bool,
+}
+
+#[derive(Clone)]
+struct AudioSource {
+    original_path: PathBuf,
+    track_index: Option<u32>,
+    kind: AudioSourceKind,
+}
+
+#[derive(Clone)]
+enum AudioSourceKind {
+    DirectAudio {
+        audio_path: PathBuf,
+    },
+    VideoTrack {
+        video_path: PathBuf,
+        track_index: u32,
+    },
+}
+
+impl AudioSource {
+    fn from_audio_file(path: PathBuf) -> Self {
+        Self {
+            original_path: path.clone(),
+            track_index: None,
+            kind: AudioSourceKind::DirectAudio { audio_path: path },
+        }
+    }
+
+    fn from_video_track(path: PathBuf, track_index: u32) -> Self {
+        Self {
+            original_path: path.clone(),
+            track_index: Some(track_index),
+            kind: AudioSourceKind::VideoTrack {
+                video_path: path,
+                track_index,
+            },
+        }
+    }
+
+    fn original_path(&self) -> &Path {
+        &self.original_path
+    }
+
+    fn track_index(&self) -> Option<u32> {
+        self.track_index
+    }
+
+    fn display_name(&self) -> String {
+        format!(
+            "{:?}{}",
+            self.original_path,
+            track_suffix(self.track_index, None)
+        )
+    }
+
+    fn input_path(&self) -> &Path {
+        match &self.kind {
+            AudioSourceKind::DirectAudio { audio_path } => audio_path,
+            AudioSourceKind::VideoTrack { video_path, .. } => video_path,
+        }
+    }
+
+    fn map_arg(&self) -> Option<String> {
+        match (&self.kind, self.track_index) {
+            (AudioSourceKind::VideoTrack { .. }, Some(track)) => Some(format!("0:{}", track)),
+            _ => None,
+        }
+    }
+
+    async fn materialize_full_audio(&self) -> Result<MaterializedAudio> {
+        match &self.kind {
+            AudioSourceKind::DirectAudio { audio_path } => Ok(MaterializedAudio {
+                path: audio_path.clone(),
+                cleanup: false,
+            }),
+            AudioSourceKind::VideoTrack {
+                video_path,
+                track_index,
+            } => {
+                let output = audio_track_path(video_path, *track_index);
+                if output.exists() {
+                    let _ = fs::remove_file(&output).await;
+                }
+                convert_track_to_mp3(video_path, *track_index, &output).await?;
+                Ok(MaterializedAudio {
+                    path: output,
+                    cleanup: true,
+                })
+            }
+        }
+    }
+
+    async fn convert_to_pcm16(&self) -> Result<PathBuf> {
+        let output = vad_audio_path(&self.original_path, self.track_index);
+        if output.exists() {
+            let _ = fs::remove_file(&output).await;
+        }
+
+        let mut cmd = Command::new("ffmpeg");
+        cmd.arg("-i").arg(self.input_path());
+        if let Some(map) = self.map_arg() {
+            cmd.arg("-map").arg(map);
+        }
+        cmd.arg("-ac")
+            .arg("1")
+            .arg("-ar")
+            .arg(VAD_SAMPLE_RATE.to_string())
+            .arg("-sample_fmt")
+            .arg("s16")
+            .arg("-y")
+            .arg(&output);
+
+        let status = cmd.status().await?;
+        if status.success() {
+            Ok(output)
+        } else {
+            Err(anyhow!(
+                "FFmpeg 转换音频用于 VAD 时失败，退出状态：{}",
+                status
+            ))
+        }
+    }
+
+    async fn export_segment_audio(
+        &self,
+        segment_idx: usize,
+        segment: &SpeechSegment,
+    ) -> Result<PathBuf> {
+        let output = segment_audio_path(&self.original_path, self.track_index, segment_idx);
+        if output.exists() {
+            let _ = fs::remove_file(&output).await;
+        }
+
+        let duration = (segment.end_sec - segment.start_sec).max(0.25);
+        let mut cmd = Command::new("ffmpeg");
+        cmd.arg("-ss")
+            .arg(format!("{:.3}", segment.start_sec))
+            .arg("-i")
+            .arg(self.input_path());
+        if let Some(map) = self.map_arg() {
+            cmd.arg("-map").arg(map);
+        }
+        cmd.arg("-t")
+            .arg(format!("{:.3}", duration))
+            .arg("-acodec")
+            .arg("libmp3lame")
+            .arg("-y")
+            .arg(&output);
+
+        let status = cmd.status().await?;
+        if status.success() {
+            Ok(output)
+        } else {
+            Err(anyhow!("FFmpeg 裁剪语音片段失败，退出状态：{}", status))
+        }
+    }
+}
+
+async fn cleanup_materialized(audio: MaterializedAudio) -> Result<()> {
+    if audio.cleanup {
+        fs::remove_file(&audio.path).await?;
+    }
+    Ok(())
+}
+
 /// 扫描指定目录并对尚未转写的媒体文件执行 ASR，返回日志列表。
 pub async fn process_directory(
     dir: PathBuf,
@@ -206,25 +375,13 @@ pub async fn process_directory(
     for job in jobs {
         match job {
             PendingJob::Audio(path) => {
-                process_audio_source(options.clone(), &path, &path, None, &mut logger).await;
+                let source = AudioSource::from_audio_file(path);
+                process_audio_source(options.clone(), source, &mut logger).await;
             }
             PendingJob::Video { path, tracks } => {
                 for track in tracks {
-                    match ensure_audio_track(&path, track).await {
-                        Ok(audio_path) => {
-                            process_audio_source(
-                                options.clone(),
-                                &path,
-                                &audio_path,
-                                Some(track),
-                                &mut logger,
-                            )
-                            .await;
-                        }
-                        Err(e) => {
-                            logger.error(format!("无法提取 {:?} 的音轨 {}：{}", path, track, e))
-                        }
-                    }
+                    let source = AudioSource::from_video_track(path.clone(), track);
+                    process_audio_source(options.clone(), source, &mut logger).await;
                 }
             }
         }
@@ -299,104 +456,90 @@ fn segment_audio_path(original: &Path, track_index: Option<u32>, segment_idx: us
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "segment".to_string());
-    let track_suffix = track_index
-        .map(|idx| format!("-track{}", idx))
-        .unwrap_or_default();
+    let track_suffix = track_file_suffix(track_index);
     original.with_file_name(format!(
         "{}{}-seg{}.mp3",
         file_name, track_suffix, segment_idx
     ))
 }
 
-async fn ensure_audio_track(video_path: &Path, stream_index: u32) -> Result<PathBuf> {
-    let output = audio_track_path(video_path, stream_index);
-    if output.exists() {
-        let _ = fs::remove_file(&output).await;
-    }
-    convert_track_to_mp3(video_path, stream_index, &output).await?;
-    Ok(output)
+fn vad_audio_path(original: &Path, track_index: Option<u32>) -> PathBuf {
+    let file_name = original
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "segment".to_string());
+    let track_suffix = track_file_suffix(track_index);
+    original.with_file_name(format!("{}{}-vad.wav", file_name, track_suffix))
+}
+
+fn track_file_suffix(track_index: Option<u32>) -> String {
+    track_index
+        .map(|idx| format!("-track{}", idx))
+        .unwrap_or_default()
 }
 
 async fn process_audio_source(
     options: Arc<ScannerOptions>,
-    original_path: &Path,
-    audio_path: &Path,
-    track_index: Option<u32>,
+    source: AudioSource,
     logger: &mut ScanLogger,
 ) {
-    let cleanup_audio = audio_path != original_path;
     let mut handled = false;
 
     if let Some(vad_cfg) = options.vad.clone() {
-        match process_with_vad(
-            &options.api_key,
-            original_path,
-            audio_path,
-            track_index,
-            &vad_cfg,
-            logger,
-        )
-        .await
-        {
+        match process_with_vad(&options.api_key, &source, &vad_cfg, logger).await {
             Ok(_) => handled = true,
             Err(err) => {
                 logger.info(format!(
-                    "VAD 分段失败（{}），回退整段上传：{:?}",
-                    err, audio_path
+                    "VAD 分段失败（{}），回退整段上传：{}",
+                    err,
+                    source.display_name()
                 ));
             }
         }
     }
 
     if !handled {
-        process_without_vad(
-            &options.api_key,
-            original_path,
-            audio_path,
-            track_index,
-            logger,
-        )
-        .await;
-    }
-
-    if cleanup_audio {
-        if let Err(err) = fs::remove_file(audio_path).await {
-            logger.info(format!("清理临时音轨 {:?} 失败：{}", audio_path, err));
-        }
+        process_without_vad(&options.api_key, &source, logger).await;
     }
 }
 
-async fn process_without_vad(
-    api_key: &str,
-    original_path: &Path,
-    audio_path: &Path,
-    track_index: Option<u32>,
-    logger: &mut ScanLogger,
-) {
-    let target_name = format!("{:?}{}", original_path, track_suffix(track_index, None));
-    logger.info(format!("开始转写 {}，音频源 {:?}", target_name, audio_path));
+async fn process_without_vad(api_key: &str, source: &AudioSource, logger: &mut ScanLogger) {
+    let target_name = source.display_name();
+    let materialized = match source.materialize_full_audio().await {
+        Ok(audio) => audio,
+        Err(err) => {
+            logger.error(format!("准备 {} 音频失败：{}", target_name, err));
+            return;
+        }
+    };
 
-    match transcribe_file(api_key, audio_path).await {
+    logger.info(format!(
+        "开始转写 {}，音频源 {:?}",
+        target_name, materialized.path
+    ));
+
+    match transcribe_file(api_key, &materialized.path).await {
         Ok(text) => {
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 logger.error(format!("{} 的识别结果为空，跳过写入。", target_name));
+                let _ = cleanup_materialized(materialized).await;
                 return;
             }
 
-            let duration = match media_duration(audio_path).await {
+            let duration = match media_duration(&materialized.path).await {
                 Ok(value) => value.max(0.5),
                 Err(e) => {
                     logger.info(format!(
                         "无法获取 {:?} 的时长（{}），使用估算值。",
-                        audio_path, e
+                        materialized.path, e
                     ));
                     estimate_duration_from_text(trimmed)
                 }
             };
 
             let srt_content = build_srt_entry(1, 0.0, duration, trimmed);
-            let srt_path = transcript_result_path(original_path, track_index);
+            let srt_path = transcript_result_path(source.original_path(), source.track_index());
             match fs::write(&srt_path, srt_content).await {
                 Ok(_) => logger.success(format!("完成 {}，结果输出 {:?}", target_name, srt_path)),
                 Err(e) => logger.error(format!("写入 {} 失败：{}", target_name, e)),
@@ -404,20 +547,22 @@ async fn process_without_vad(
         }
         Err(e) => logger.error(format!("调用 API 转写 {} 失败：{}", target_name, e)),
     }
+
+    if let Err(err) = cleanup_materialized(materialized).await {
+        logger.info(format!("清理临时音轨失败：{}", err));
+    }
 }
 
 async fn process_with_vad(
     api_key: &str,
-    original_path: &Path,
-    audio_path: &Path,
-    track_index: Option<u32>,
+    source: &AudioSource,
     vad_cfg: &VadConfig,
     logger: &mut ScanLogger,
 ) -> Result<()> {
-    let display_name = format!("{:?}{}", original_path, track_suffix(track_index, None));
+    let display_name = source.display_name();
     logger.info(format!("{} 启用 VAD，准备语音分段。", display_name));
 
-    let pcm_path = convert_to_pcm16(audio_path).await?;
+    let pcm_path = source.convert_to_pcm16().await?;
     let samples = read_wav_samples(&pcm_path).await?;
     let _ = fs::remove_file(&pcm_path).await;
 
@@ -430,7 +575,7 @@ async fn process_with_vad(
 
     let mut entries: Vec<String> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
-        let segment_audio = export_segment_audio(audio_path, track_index, idx + 1, segment).await?;
+        let segment_audio = source.export_segment_audio(idx + 1, segment).await?;
         match transcribe_file(api_key, &segment_audio).await {
             Ok(text) => {
                 let trimmed = text.trim();
@@ -463,7 +608,7 @@ async fn process_with_vad(
         return Err(anyhow!("所有分段均转写失败"));
     }
 
-    let srt_path = transcript_result_path(original_path, track_index);
+    let srt_path = transcript_result_path(source.original_path(), source.track_index());
     let srt_content: String = entries.concat();
     fs::write(&srt_path, srt_content).await?;
     logger.success(format!(
@@ -471,32 +616,6 @@ async fn process_with_vad(
         display_name, srt_path
     ));
     Ok(())
-}
-
-async fn convert_to_pcm16(audio_path: &Path) -> Result<PathBuf> {
-    let output = audio_path.with_extension("vad.wav");
-    let status = Command::new("ffmpeg")
-        .arg("-i")
-        .arg(audio_path)
-        .arg("-ac")
-        .arg("1")
-        .arg("-ar")
-        .arg(VAD_SAMPLE_RATE.to_string())
-        .arg("-sample_fmt")
-        .arg("s16")
-        .arg("-y")
-        .arg(&output)
-        .status()
-        .await?;
-
-    if status.success() {
-        Ok(output)
-    } else {
-        Err(anyhow!(
-            "FFmpeg 转换音频用于 VAD 时失败，退出状态：{}",
-            status
-        ))
-    }
 }
 
 async fn read_wav_samples(path: &Path) -> Result<Vec<i16>> {
@@ -608,35 +727,6 @@ fn finalize_segment(state: &SegmentState, cfg: &VadConfig, segments: &mut Vec<Sp
             state.start_chunk,
             state.last_active_chunk + 1,
         ));
-    }
-}
-
-async fn export_segment_audio(
-    audio_path: &Path,
-    track_index: Option<u32>,
-    segment_idx: usize,
-    segment: &SpeechSegment,
-) -> Result<PathBuf> {
-    let output = segment_audio_path(audio_path, track_index, segment_idx);
-    let duration = (segment.end_sec - segment.start_sec).max(0.25);
-    let status = Command::new("ffmpeg")
-        .arg("-ss")
-        .arg(format!("{:.3}", segment.start_sec))
-        .arg("-i")
-        .arg(audio_path)
-        .arg("-t")
-        .arg(format!("{:.3}", duration))
-        .arg("-acodec")
-        .arg("libmp3lame")
-        .arg("-y")
-        .arg(&output)
-        .status()
-        .await?;
-
-    if status.success() {
-        Ok(output)
-    } else {
-        Err(anyhow!("FFmpeg 裁剪语音片段失败，退出状态：{}", status))
     }
 }
 
