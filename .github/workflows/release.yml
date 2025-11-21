@@ -26,6 +26,31 @@ jobs:
       - name: Build release binary
         run: cargo build --release --all-features
 
+      - name: Download FFmpeg bundle
+        id: ffmpeg_bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ffmpegUrl = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-full.7z'
+          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg.7z'
+          $extractDir = Join-Path $env:RUNNER_TEMP 'ffmpeg_extract'
+          if (Test-Path $archive) { Remove-Item $archive -Force }
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile $archive
+          choco install 7zip --no-progress -y | Out-Null
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+          if (-not (Test-Path $sevenZip)) {
+            throw "找不到 7z.exe，无法解压 $archive"
+          }
+          & $sevenZip x $archive "-o$extractDir" -y | Out-Null
+          $ffmpegExe = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
+          $ffprobeExe = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
+          if (-not $ffmpegExe -or -not $ffprobeExe) {
+            throw "在下载的压缩包中找不到 ffmpeg.exe 或 ffprobe.exe"
+          }
+          "ffmpeg_path=$($ffmpegExe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "ffprobe_path=$($ffprobeExe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Package artifacts
         shell: pwsh
         run: |
@@ -38,6 +63,8 @@ jobs:
           Copy-Item target/release/auto_asr.exe $dist/
           Copy-Item README.md $dist/
           Copy-Item LICENSE $dist/
+          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffmpeg_path }}' (Join-Path $dist 'ffmpeg.exe')
+          Copy-Item '${{ steps.ffmpeg_bundle.outputs.ffprobe_path }}' (Join-Path $dist 'ffprobe.exe')
           $zipPath = "auto_asr-windows.zip"
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
           Compress-Archive -Path "$dist/*" -DestinationPath $zipPath

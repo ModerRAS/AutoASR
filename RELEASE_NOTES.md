@@ -1,5 +1,9 @@
 # AutoASR Releases
 
+## v0.6.3 - 2025-11-21
+
+- 📦 **内置 FFmpeg/FFprobe**：GitHub Release 构建会自动从 gyan.dev 下载最新的 FFmpeg 静态包，将 `ffmpeg.exe` 与 `ffprobe.exe` 同捆到 `auto_asr.exe` 所在目录，用户只需解压就能运行，无需额外配置环境。
+
 ## v0.6.2 - 2025-11-21
 
 - 🚀 **单次转码**：视频音轨在上传前不再经历“整轨 MP3 -> 片段 MP3”的二次转码，直接按原轨裁剪分段，减少一倍处理时间并避免额外音质损失。

@@ -37,8 +37,8 @@ AutoASR/
 ### 环境依赖
 
 - Rust 工具链（推荐 `rustup` 安装，最低 1.75+）
-- FFmpeg/FFprobe（确保 `ffmpeg`、`ffprobe` 命令可用；通常同捆提供）
 - Windows/Mac/Linux 任意桌面环境
+- Windows Release 压缩包已内置 `ffmpeg.exe`、`ffprobe.exe`，无需再额外安装；源码构建用户仍需保证 `ffmpeg`、`ffprobe` 在 PATH 中可用。
 
 ### 构建与运行
 
@@ -85,7 +85,7 @@ vad_min_segment_secs = 2.0
 | Workflow | 触发条件 | 说明 |
 | --- | --- | --- |
 | `ci.yml` | push / PR 到 master | 运行 `cargo fmt`, `cargo clippy`, `cargo test`, `cargo build`，并上传 Windows 构建产物作为 artifact。 |
-| `release.yml` | 推送 `v*` 标签或手动触发 | 在 Windows runner 上构建 release，打包 `auto_asr.exe + README + LICENSE` 为 zip，通过 softprops/action-gh-release 发布到 GitHub Release。 |
+| `release.yml` | 推送 `v*` 标签或手动触发 | 在 Windows runner 上构建 release，下载最新 FFmpeg 静态包并同捆 `auto_asr.exe + ffmpeg.exe + ffprobe.exe + README + LICENSE`，再通过 softprops/action-gh-release 发布。 |
 
 发布新版本步骤：
 
