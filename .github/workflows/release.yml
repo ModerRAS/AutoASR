@@ -48,8 +48,50 @@ jobs:
           name: auto_asr-windows-release
           path: auto_asr-windows.zip
 
+      - name: Extract release notes
+        id: release_notes
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:TAG_NAME
+          if (-not $tag) {
+            throw "无法确定当前标签，无法生成发布说明。"
+          }
+          if ($tag -notmatch '^v(?<ver>.+)$') {
+            throw "Release workflow 需要由 v* 标签触发，当前标签: $tag"
+          }
+          $version = $Matches['ver']
+          $notesPath = "RELEASE_NOTES.md"
+          if (-not (Test-Path $notesPath)) {
+            throw "找不到 $notesPath，无法生成发布说明。"
+          }
+          $content = Get-Content $notesPath -Raw
+          $escaped = [regex]::Escape($version)
+          $pattern = "(?s)##\s+v$escaped\b.*?(?=##\s+v|\Z)"
+          $match = [regex]::Match($content, $pattern)
+          if (-not $match.Success) {
+            throw "在 RELEASE_NOTES.md 中找不到 v$version 的条目。"
+          }
+          $section = $match.Value.Trim()
+          $lines = $section -split "`r?`n"
+          if ($lines.Length -gt 1) {
+            $body = ($lines[1..($lines.Length - 1)] -join "`n").Trim()
+          }
+          else {
+            $body = $section
+          }
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            $body = "尚无发布说明。"
+          }
+          "body<<'EOF'" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $body | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: auto_asr-windows.zip
-          generate_release_notes: true
+          body: ${{ steps.release_notes.outputs.body }}
+          generate_release_notes: false
