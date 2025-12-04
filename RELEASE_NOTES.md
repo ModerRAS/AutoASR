@@ -1,5 +1,12 @@
 # AutoASR Releases
 
+## v0.7.0 - 2025-12-04
+
+- ⚙️ **自定义 ASR API**：新增 `api_url` 与 `model_name` 配置项，GUI 与 `config.toml` 的默认值可通过界面或外部文件修改，方便接入自建或第三方 ASR 服务（例如自定义地址、改用不同模型）。
+- 🧭 **配置/UX 优化**：改进配置加载/保存提示与默认值，增强错误提示信息与用户引导，优化排错体验。
+- 🧪 **稳定性 & 修复**：构建、测试通过，若有兼容性改动已在单元测试中覆盖。
+
+
 ## v0.6.4 - 2025-11-21
 
 - 📦 **Full/Slim 双版本发布**：Release workflow 同时输出 `auto_asr-windows-full.zip`（随附 `ffmpeg.exe` / `ffprobe.exe`）与 `auto_asr-windows-slim.zip`（纯 `auto_asr.exe`），方便已有 FFmpeg 环境的用户选择更小的下载包。
