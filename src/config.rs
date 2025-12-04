@@ -11,8 +11,12 @@ use std::path::PathBuf;
 pub struct AppConfig {
     /// 媒体文件根目录，`None` 表示尚未选择。
     pub directory: Option<String>,
-    /// SiliconFlow 服务的 API Key。
+    /// ASR 服务的 API Key。
     pub api_key: String,
+    /// ASR 服务的 API 地址。
+    pub api_url: String,
+    /// ASR 模型名称。
+    pub model_name: String,
     /// 每日执行时间，24 小时制 `HH:MM`。
     pub schedule_time: String,
     /// 是否启用基于 VAD 的语音分段。
@@ -28,6 +32,8 @@ impl Default for AppConfig {
         Self {
             directory: None,
             api_key: String::new(),
+            api_url: "https://api.siliconflow.cn/v1/audio/transcriptions".to_string(),
+            model_name: "FunAudioLLM/SenseVoiceSmall".to_string(),
             schedule_time: "02:00".to_string(),
             vad_enabled: true,
             vad_threshold: 0.6,

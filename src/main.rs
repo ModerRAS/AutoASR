@@ -39,6 +39,8 @@ enum Message {
     DirectorySelected(Option<PathBuf>),
     SelectDirectory,
     ApiKeyChanged(String),
+    ApiUrlChanged(String),
+    ModelNameChanged(String),
     ScheduleTimeChanged(String),
     VadToggled(bool),
     VadThresholdChanged(f32),
@@ -74,7 +76,7 @@ impl Application for AutoAsrApp {
     }
 
     fn title(&self) -> String {
-        String::from("AutoASR - SiliconFlow 语音助手")
+        String::from("AutoASR - 语音转写助手")
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -98,6 +100,12 @@ impl Application for AutoAsrApp {
             }
             Message::ApiKeyChanged(key) => {
                 self.config.api_key = key;
+            }
+            Message::ApiUrlChanged(url) => {
+                self.config.api_url = url;
+            }
+            Message::ModelNameChanged(name) => {
+                self.config.model_name = name;
             }
             Message::ScheduleTimeChanged(time) => {
                 self.config.schedule_time = time;
@@ -227,6 +235,16 @@ impl Application for AutoAsrApp {
             .padding(10)
             .font(font);
 
+        let api_url_input = text_input("API 地址", &self.config.api_url)
+            .on_input(Message::ApiUrlChanged)
+            .padding(10)
+            .font(font);
+
+        let model_name_input = text_input("模型名称", &self.config.model_name)
+            .on_input(Message::ModelNameChanged)
+            .padding(10)
+            .font(font);
+
         let schedule_input = text_input("执行时间（HH:MM）", &self.config.schedule_time)
             .on_input(Message::ScheduleTimeChanged)
             .padding(10)
@@ -304,6 +322,18 @@ impl Application for AutoAsrApp {
                     .push(dir_btn)
                     .push(dir_display)
                     .align_items(Alignment::Center),
+            )
+            .push(
+                Column::new()
+                    .spacing(5)
+                    .push(text("API 地址：").font(font))
+                    .push(api_url_input),
+            )
+            .push(
+                Column::new()
+                    .spacing(5)
+                    .push(text("模型名称：").font(font))
+                    .push(model_name_input),
             )
             .push(
                 Column::new()
@@ -469,6 +499,8 @@ impl AutoAsrApp {
         self.log_info(reason);
 
         let api_key = self.config.api_key.clone();
+        let api_url = self.config.api_url.clone();
+        let model_name = self.config.model_name.clone();
         let vad = if self.config.vad_enabled {
             Some(VadConfig::from_user_settings(
                 self.config.vad_threshold,
@@ -482,7 +514,12 @@ impl AutoAsrApp {
         let progress_handle = Arc::new(Mutex::new(progress_rx));
         self.scan_progress_rx = Some(progress_handle.clone());
 
-        let options = ScannerOptions { api_key, vad };
+        let options = ScannerOptions {
+            api_key,
+            api_url,
+            model_name,
+            vad,
+        };
         let scan_cmd = Command::perform(
             process_directory(dir_path, options, Some(progress_tx)),
             |res| Message::ScanFinished(res.map_err(|e| e.to_string())),

@@ -1,7 +1,7 @@
 # Vibe Coding Prompt – AutoASR
 
 ## TL;DR
-- Rust + Iced 的桌面 GUI：按配置时间扫描指定目录的音/视频，借助 SiliconFlow ASR API 生成同名 `.srt` 字幕文件。
+- Rust + Iced 的桌面 GUI：按配置时间扫描指定目录的音/视频，借助可自定义的 ASR API（默认 SiliconFlow）生成同名 `.srt` 字幕文件。
 - Scanner 会递归查找媒体、调用 FFmpeg 将视频转 MP3，再上传 API，最后写回文本与日志。
 - 配置存储于 `config.toml`，CI/CD 使用 GitHub Actions（`ci.yml` / `release.yml`）。
 
@@ -24,7 +24,7 @@ cargo run --release
 - `src/main.rs`：`AutoAsrApp`（Iced Application）、调度逻辑、日志 UI。
 - `src/config.rs`：`AppConfig` 的加载/保存，含默认值。
 - `src/scanner.rs`：`process_directory` + 媒体判定 + FFmpeg 转码 + 结果写入。
-- `src/api.rs`：`transcribe_file` 封装 SiliconFlow API 请求与错误格式化。
+- `src/api.rs`：`transcribe_file` 封装 ASR API 请求与错误格式化，支持自定义 API 地址和模型名称。
 - `README.md`：中文使用说明；`example.py` 为 API 对照示例；`.github/workflows` 提供 CI/Release。
 
 ## 开发约定

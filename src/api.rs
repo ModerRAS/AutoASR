@@ -1,4 +1,4 @@
-//! 调用 SiliconFlow 语音转写 API 的封装。
+//! 调用 ASR 语音转写 API 的封装，支持自定义 API 地址和模型。
 
 use anyhow::{anyhow, Result};
 use reqwest::{Client, StatusCode};
@@ -16,9 +16,13 @@ pub struct SuccessResponse {
 }
 
 /// 上传单个音频文件并返回识别文本，自动推断常见 MIME 类型。
-pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> {
+pub async fn transcribe_file(
+    api_key: &str,
+    api_url: &str,
+    model_name: &str,
+    file_path: &Path,
+) -> Result<String> {
     let client = Client::new();
-    let url = "https://api.siliconflow.cn/v1/audio/transcriptions";
 
     let file_name = file_path
         .file_name()
@@ -47,11 +51,11 @@ pub async fn transcribe_file(api_key: &str, file_path: &Path) -> Result<String> 
         .mime_str(mime_type)?;
 
     let form = reqwest::multipart::Form::new()
-        .text("model", "FunAudioLLM/SenseVoiceSmall")
+        .text("model", model_name.to_string())
         .part("file", file_part);
 
     let response = client
-        .post(url)
+        .post(api_url)
         .header("Authorization", format!("Bearer {}", api_key))
         .multipart(form)
         .timeout(std::time::Duration::from_secs(3600)) // 大文件需要更长超时

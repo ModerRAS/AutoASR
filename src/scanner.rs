@@ -73,6 +73,8 @@ fn ffprobe_program() -> OsString {
 #[derive(Clone)]
 pub struct ScannerOptions {
     pub api_key: String,
+    pub api_url: String,
+    pub model_name: String,
     pub vad: Option<VadConfig>,
 }
 
@@ -519,7 +521,16 @@ async fn process_audio_source(
     let mut handled = false;
 
     if let Some(vad_cfg) = options.vad.clone() {
-        match process_with_vad(&options.api_key, &source, &vad_cfg, logger).await {
+        match process_with_vad(
+            &options.api_key,
+            &options.api_url,
+            &options.model_name,
+            &source,
+            &vad_cfg,
+            logger,
+        )
+        .await
+        {
             Ok(_) => handled = true,
             Err(err) => {
                 logger.info(format!(
@@ -532,11 +543,24 @@ async fn process_audio_source(
     }
 
     if !handled {
-        process_without_vad(&options.api_key, &source, logger).await;
+        process_without_vad(
+            &options.api_key,
+            &options.api_url,
+            &options.model_name,
+            &source,
+            logger,
+        )
+        .await;
     }
 }
 
-async fn process_without_vad(api_key: &str, source: &AudioSource, logger: &mut ScanLogger) {
+async fn process_without_vad(
+    api_key: &str,
+    api_url: &str,
+    model_name: &str,
+    source: &AudioSource,
+    logger: &mut ScanLogger,
+) {
     let target_name = source.display_name();
     let materialized = match source.materialize_full_audio().await {
         Ok(audio) => audio,
@@ -551,7 +575,7 @@ async fn process_without_vad(api_key: &str, source: &AudioSource, logger: &mut S
         target_name, materialized.path
     ));
 
-    match transcribe_file(api_key, &materialized.path).await {
+    match transcribe_file(api_key, api_url, model_name, &materialized.path).await {
         Ok(text) => {
             let trimmed = text.trim();
             if trimmed.is_empty() {
@@ -588,6 +612,8 @@ async fn process_without_vad(api_key: &str, source: &AudioSource, logger: &mut S
 
 async fn process_with_vad(
     api_key: &str,
+    api_url: &str,
+    model_name: &str,
     source: &AudioSource,
     vad_cfg: &VadConfig,
     logger: &mut ScanLogger,
@@ -626,7 +652,7 @@ async fn process_with_vad(
     let mut entries: Vec<String> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
         let segment_audio = source.export_segment_audio(idx + 1, segment).await?;
-        match transcribe_file(api_key, &segment_audio).await {
+        match transcribe_file(api_key, api_url, model_name, &segment_audio).await {
             Ok(text) => {
                 let trimmed = text.trim();
                 if trimmed.is_empty() {
